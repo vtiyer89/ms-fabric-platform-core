@@ -1,0 +1,75 @@
+name: Deploy Fabric Item (reusable)
+
+# Shared deploy logic for all ms-fabric-* repos. Called via:
+#   uses: vtiyer89/ms-fabric-platform-core/.github/workflows/deploy-fabric-item.yml@main
+#
+# Each caller repo supplies its own workspace/repository-directory/item-scope; this workflow
+# checks out both the calling repo (to get its parameter.yml + item folders) and this repo
+# (to get the shared deploy script), then runs fabric-cicd.
+#
+# One-time setup: in ms-fabric-platform-core, Settings -> Actions -> General -> Access,
+# allow "Accessible from repositories in the 'vtiyer89' organization" so the other repos
+# are permitted to call this workflow.
+
+on:
+  workflow_call:
+    inputs:
+      workspace-id:
+        required: true
+        type: string
+      environment-name:
+        required: true
+        type: string
+        description: "Must match a key in the caller repo's parameter.yml, e.g. TEST"
+      repository-directory:
+        required: true
+        type: string
+        description: "Path, relative to the caller repo's root, containing that workspace's items + parameter.yml"
+      items-in-scope:
+        required: true
+        type: string
+        description: "Comma-separated Fabric item types, e.g. Lakehouse,DataPipeline,Notebook"
+      platform-core-ref:
+        required: false
+        type: string
+        default: main
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_CLIENT_SECRET:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout calling repo
+        uses: actions/checkout@v4
+        with:
+          path: item-repo
+
+      - name: Checkout ms-fabric-platform-core (shared deploy script)
+        uses: actions/checkout@v4
+        with:
+          repository: vtiyer89/ms-fabric-platform-core
+          ref: ${{ inputs.platform-core-ref }}
+          path: platform-core
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r platform-core/scripts/requirements.txt
+
+      - run: |
+          python platform-core/scripts/deploy_fabric_item.py \
+            --workspace-id "${{ inputs.workspace-id }}" \
+            --environment "${{ inputs.environment-name }}" \
+            --repository-directory "item-repo/${{ inputs.repository-directory }}" \
+            --items-in-scope "${{ inputs.items-in-scope }}"
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
