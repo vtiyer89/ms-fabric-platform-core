@@ -27,14 +27,19 @@ recreated.
       Silver, Gold, Orchestration, Reporting)
 - [ ] All four Fabric connections exist, using **Service principal** auth with
       `spn-fabric-test-deploy`'s credentials (not Organizational account)
+- [ ] All four connections are **shared** to `spn-fabric-test-deploy` (role **User**) — a
+      separate grant from the auth kind above, and the one most often missed
+
+Full grant-by-grant reference, plus curl commands to verify each without running a deploy:
+[spn-permissions-process-doc.md](spn-permissions-process-doc.md).
 
 ## 1. Git-level correctness (before deploying)
 
 - [ ] No leftover placeholders anywhere:
       `grep -rn '<TEST-' */parameter.yml` across all five repos returns nothing
 - [ ] Every `$workspace.<name>...` reference uses a name that matches the "Topology" table in
-      the process doc exactly (`ws-test-landing-rjoose-v2`, `ws-test-dd-sustainability-silver`,
-      `ws-test-dd-sustainability-gold`) — a typo here fails loudly at deploy time, but it's
+      the process doc exactly (`ws-test-landing-rjoose-v2`, `ws-test-dd-sustainability-silver-v2`,
+      `ws-test-dd-sustainability-gold-v2`) — a typo here fails loudly at deploy time, but it's
       faster to catch by eye first
 - [ ] `scripts/requirements.txt`'s pinned `fabric-cicd` version matches what
       `deploy-fabric-item.yml` and `debug_parameterization.py` (if you ran it) were tested
@@ -58,7 +63,7 @@ Run in deploy order — each section assumes the previous ones already passed.
       copy-job connection you created (name matches what you gave it in step 3 of the setup
       doc)
 
-### Silver (`ws-test-dd-sustainability-silver`, from `ms-fabric-dd-trip-data`)
+### Silver (`ws-test-dd-sustainability-silver-v2`, from `ms-fabric-dd-trip-data`)
 
 - [ ] `deploy-silver` job is green
 - [ ] Workspace contains: `lh_silver_dd_trip_records` (Lakehouse),
@@ -70,7 +75,7 @@ Run in deploy order — each section assumes the previous ones already passed.
 - [ ] Open `invoke_silver_transform` → the `invoke_silver_transform_nb` activity's connection
       is the Test notebook connection you created for Silver
 
-### Gold (`ws-test-dd-sustainability-gold`, from `ms-fabric-dd-trip-data`)
+### Gold (`ws-test-dd-sustainability-gold-v2`, from `ms-fabric-dd-trip-data`)
 
 - [ ] `deploy-gold` job is green (should only start after `deploy-silver` succeeds)
 - [ ] Workspace contains: `lh_gold_dd_trip_records` (Lakehouse),

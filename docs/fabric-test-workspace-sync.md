@@ -72,6 +72,13 @@ ms-fabric-dp-trip-report/semantic_models/taxi_trip/parameter.yml
 *Access* → allow "Accessible from repositories in the `vtiyer89` organization" (or list the
 four caller repos explicitly). Without this, the other repos can't call its reusable workflow.
 
+> **Temporary deviation.** That setting isn't granted yet, so `ms-fabric-ingestion` and
+> `ms-fabric-dd-trip-data` currently *inline* the deploy instead: each carries its own copy of
+> `scripts/deploy_fabric_item.py` + `scripts/requirements.txt` and runs it directly, rather
+> than calling the reusable workflow. Both workflow files carry a comment saying so. Once
+> access is granted, revert them to the `uses:` form and delete the duplicated scripts —
+> until then those copies can drift from the canonical ones here.
+
 ## Cross-repo ordering isn't automated
 
 Within `ms-fabric-dd-trip-data`, gold's job `needs: deploy-silver` inside the same workflow
@@ -99,8 +106,8 @@ the exported Dev JSON — see git history of this file if you want the original 
 | Logical workspace | Test display name | Deployed from |
 |---|---|---|
 | Landing + Ingestion | `ws-test-landing-rjoose-v2` | `ms-fabric-ingestion` / `datasource_nyc_taxi` |
-| Silver | `ws-test-dd-sustainability-silver` | `ms-fabric-dd-trip-data` / `silver` |
-| Gold | `ws-test-dd-sustainability-gold` | `ms-fabric-dd-trip-data` / `gold` |
+| Silver | `ws-test-dd-sustainability-silver-v2` | `ms-fabric-dd-trip-data` / `silver` |
+| Gold | `ws-test-dd-sustainability-gold-v2` | `ms-fabric-dd-trip-data` / `gold` |
 
 **Landing and Bronze are genuinely separate workspaces in the live tenant** (`Test-bronze` and
 `Test ingestion ws` both exist as their own workspace IDs), but by deliberate choice we deploy
@@ -130,6 +137,10 @@ below.
   shared across all four repos, e.g. `spn-fabric-test-deploy`. Note its **Application
   (client) ID**, **Directory (tenant) ID**, and create a **client secret** (note the secret
   *value* — it's only shown once).
+
+Every grant that identity needs — tenant setting, workspace role, connection share — is
+covered in [spn-permissions-process-doc.md](spn-permissions-process-doc.md), including an
+error-to-missing-grant lookup table. Read it before debugging any permission failure below.
 
 ## 2. Create the Test workspaces
 
@@ -238,7 +249,7 @@ fabric-cicd's `$workspace.<name>.$id` and `$workspace.<name>.$items.<Type>.<Name
 variables, e.g.:
 
 ```yaml
-TEST: "$workspace.ws-test-dd-sustainability-silver.$items.Lakehouse.lh_silver_dd_trip_records.$id"
+TEST: "$workspace.ws-test-dd-sustainability-silver-v2.$items.Lakehouse.lh_silver_dd_trip_records.$id"
 ```
 
 At deploy time, fabric-cicd looks up that item by name in that workspace via the Fabric API
