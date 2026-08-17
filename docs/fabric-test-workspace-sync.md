@@ -98,7 +98,7 @@ the exported Dev JSON — see git history of this file if you want the original 
 
 | Logical workspace | Test display name | Deployed from |
 |---|---|---|
-| Landing + Ingestion | `ws-test-landing-rjoose` | `ms-fabric-ingestion` / `datasource_nyc_taxi` |
+| Landing + Ingestion | `ws-test-landing-rjoose-v2` | `ms-fabric-ingestion` / `datasource_nyc_taxi` |
 | Silver | `ws-test-dd-sustainability-silver` | `ms-fabric-dd-trip-data` / `silver` |
 | Gold | `ws-test-dd-sustainability-gold` | `ms-fabric-dd-trip-data` / `gold` |
 
@@ -106,7 +106,7 @@ the exported Dev JSON — see git history of this file if you want the original 
 `Test ingestion ws` both exist as their own workspace IDs), but by deliberate choice we deploy
 `ms-fabric-ingestion`'s entire `datasource_nyc_taxi` folder — landing lakehouse, bronze
 lakehouse, both pipelines, the copy job — as one unit into the Landing workspace
-(`ws-test-landing-rjoose`) only. `Test-bronze` and `Test ingestion ws` sit unused. This keeps
+(`ws-test-landing-rjoose-v2`) only. `Test-bronze` and `Test ingestion ws` sit unused. This keeps
 the deploy mechanics simple (one job, one `repository_directory`, one `workspace-id`) at the
 cost of Test's Ingestion layout not matching Dev's 1:1. If that divergence ever becomes a
 problem, splitting `ms-fabric-ingestion`'s deploy into two jobs (mirroring how

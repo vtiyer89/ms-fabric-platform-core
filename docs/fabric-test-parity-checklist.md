@@ -33,7 +33,7 @@ recreated.
 - [ ] No leftover placeholders anywhere:
       `grep -rn '<TEST-' */parameter.yml` across all five repos returns nothing
 - [ ] Every `$workspace.<name>...` reference uses a name that matches the "Topology" table in
-      the process doc exactly (`ws-test-landing-rjoose`, `ws-test-dd-sustainability-silver`,
+      the process doc exactly (`ws-test-landing-rjoose-v2`, `ws-test-dd-sustainability-silver`,
       `ws-test-dd-sustainability-gold`) — a typo here fails loudly at deploy time, but it's
       faster to catch by eye first
 - [ ] `scripts/requirements.txt`'s pinned `fabric-cicd` version matches what
@@ -44,7 +44,7 @@ recreated.
 
 Run in deploy order — each section assumes the previous ones already passed.
 
-### Ingestion (`ws-test-landing-rjoose`, from `ms-fabric-ingestion`)
+### Ingestion (`ws-test-landing-rjoose-v2`, from `ms-fabric-ingestion`)
 
 - [ ] `deploy-test.yml` run is green
 - [ ] Workspace contains: `lh_landing_nyc_taxi` (Lakehouse), `lh_bronze_nyc_taxi` (Lakehouse),
@@ -89,7 +89,7 @@ Run in deploy order — each section assumes the previous ones already passed.
 - [ ] Open `pl_orch_trips` → each of the four activities resolves to the **Test** target, not
       Dev — click into `master_landing`, `master_bronze`, `master_silver`, `master_gold` one
       at a time and confirm the **Workspace** and **Pipeline** dropdowns show the Test
-      workspace/pipeline names (`ws-test-landing-rjoose` / `pl_landing_nyc_ingest`, etc.), not
+      workspace/pipeline names (`ws-test-landing-rjoose-v2` / `pl_landing_nyc_ingest`, etc.), not
       blank/unresolved
 - [ ] All four activities' connection is the Test pipeline-invoke connection from step 3
 
