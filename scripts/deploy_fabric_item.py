@@ -45,6 +45,7 @@ if os.getenv("RUNNER_DEBUG") == "1":
 WORKFLOW_PREFIX = "FABRIC_PARAM_"
 FABRIC_CICD_PREFIX = "$ENV:"
 TOKEN_PATTERN = r"\$ENV:([A-Za-z_][A-Za-z0-9_]*)"
+GUID_PATTERN = re.compile(r"^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
 
 
 def inject_parameter_env_vars() -> set[str]:
@@ -127,6 +128,29 @@ def assert_find_values_present(repository_directory: str) -> None:
         )
 
 
+def assert_workspace_id_supplied(workspace_id: str) -> None:
+    """Exit non-zero if --workspace-id is blank or isn't a GUID.
+
+    `${{ vars.FOO }}` interpolates to an empty string when the GitHub variable doesn't exist,
+    and argparse's required=True is satisfied by "". fabric-cicd then fails with a generic
+    "Either workspace_name or workspace_id must be specified", which doesn't say which variable
+    is missing — that's bug 7.3, and renaming a workspace variable is the easiest way to
+    recreate it.
+    """
+    if not workspace_id.strip():
+        sys.exit(
+            "[error] --workspace-id is empty. The GitHub variable behind it doesn't exist, is "
+            "empty, or was created under Secrets instead of Variables.\n"
+            "[error] Check the vars.* name in the caller workflow matches a repo Variable — a "
+            "renamed workspace variable is the usual cause."
+        )
+    if not GUID_PATTERN.match(workspace_id.strip()):
+        sys.exit(
+            f"[error] --workspace-id {workspace_id!r} is not a GUID. Expected a workspace ID, "
+            f"not a display name."
+        )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Deploy a Fabric workspace's items via fabric-cicd.")
     parser.add_argument("--workspace-id", required=True)
@@ -145,6 +169,7 @@ def main():
     )
     args = parser.parse_args()
 
+    assert_workspace_id_supplied(args.workspace_id)
     items_to_include = [i.strip() for i in args.items_to_include.split(",") if i.strip()] or None
 
     append_feature_flag("enable_environment_variable_replacement")
