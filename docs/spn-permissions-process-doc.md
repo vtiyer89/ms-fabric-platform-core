@@ -6,7 +6,8 @@ when one is missing. Companion to [fabric-test-workspace-sync.md](fabric-test-wo
 (verifying the result).
 
 `spn-fabric-test-deploy` is a single Microsoft Entra app registration shared by all four item
-repos' GitHub Actions workflows. It authenticates with a client secret
+repos' GitHub Actions workflows, now covering **six** Test workspaces (Landing, Bronze, Silver,
+Gold, Orchestration, and Reporting once it exists). It authenticates with a client secret
 (`ClientSecretCredential`) and calls only the **Fabric REST API** — never Azure Resource
 Manager, never Microsoft Graph.
 
@@ -22,7 +23,7 @@ in particular, surfaces 3 and 4 are routinely mistaken for each other (see §4).
 | 2 | Fabric tenant setting for SPN API access | Fabric Admin Portal → Tenant settings | ✅ Done (assumed — deploys work) |
 | 3 | Workspace role (per Test workspace) | Workspace → Manage access | ⚠️ Partial — see §3 |
 | 4 | Connection share (per connection) | Manage connections and gateways → Manage users | ⚠️ 1 of 4 — see §4 |
-| 5 | Capacity assignment (per workspace) | Workspace settings → License info | ⚠️ Unverified for v2 workspaces |
+| 5 | Capacity assignment (per workspace) | Workspace settings → License info | ⚠️ Unverified for the landing/bronze/v2 workspaces |
 
 ---
 
@@ -96,7 +97,8 @@ Member adds the ability to grant others access, also unnecessary.
 
 | Test workspace | Why | Status |
 |---|---|---|
-| `ws-test-landing-rjoose-v2` | deploy target | ✅ granted, proven in CI |
+| `ws-test-landing-rjoose-v2` | deploy target (landing job) | ✅ granted, proven in CI |
+| `Test-bronze` | deploy target (bronze job) | ❓ **grant needed** — newly in use, never deployed to |
 | `ws-test-dd-sustainability-silver-v2` | deploy target | ❓ **re-grant needed** — workspace was recreated; v1's grant did not carry over |
 | `ws-test-dd-sustainability-gold-v2` | deploy target | ❓ **re-grant needed** — same |
 | Orchestration (`860d3864-…`) | deploy target **and** runtime invoke source | ❓ unverified |
@@ -106,17 +108,18 @@ Roles do not survive workspace deletion. Any time a workspace is recreated, re-a
 
 ### Cross-workspace read access
 
-Deploying Silver runs a live lookup into the *Ingestion* workspace to resolve
-`$workspace.ws-test-landing-rjoose-v2.$items.Lakehouse.lh_bronze_nyc_taxi.$id`. That lookup
+Deploying Silver runs a live lookup into the *Bronze* workspace to resolve
+`$workspace.Test-bronze.$items.Lakehouse.lh_bronze_nyc_taxi.$id`. That lookup
 requires the SPN to have a role on the workspace being **read**, not just the one being
-written. Contributor on all five satisfies this — no extra grant — but it's the reason a
+written. Contributor on all six satisfies this — no extra grant — but it's the reason a
 lookup can fail with a permissions error rather than a "not found" error.
 
 | Deploying… | Also reads from | Needs a role there |
 |---|---|---|
-| Silver | Ingestion | ✅ |
+| Ingestion (bronze job) | Landing | ✅ |
+| Silver | Bronze | ✅ |
 | Gold | Silver | ✅ |
-| Orchestration | Ingestion, Silver, Gold | ✅ (all three) |
+| Orchestration | Landing, Bronze, Silver, Gold | ✅ (all four) |
 | Reporting | Gold | ✅ |
 
 ## 4. Connection permissions — the two-hat distinction

@@ -18,13 +18,15 @@ recreated.
       org level)
 - [ ] Client secret hasn't expired (check its expiry date in Entra ID — nothing surfaces this
       until a deploy suddenly fails with an auth error)
-- [ ] Repo variables set: `ms-fabric-ingestion` → `TEST_WORKSPACE_ID`; `ms-fabric-dd-trip-data`
-      → `TEST_SILVER_WORKSPACE_ID` + `TEST_GOLD_WORKSPACE_ID`; `ms-fabric-orchestration` →
-      `TEST_WORKSPACE_ID`; `ms-fabric-dp-trip-report` → `TEST_WORKSPACE_ID`
+- [ ] Repo variables set: `ms-fabric-ingestion` → `TEST_LANDING_WORKSPACE_ID` +
+      `TEST_BRONZE_WORKSPACE_ID`; `ms-fabric-dd-trip-data` → `TEST_SILVER_WORKSPACE_ID` +
+      `TEST_GOLD_WORKSPACE_ID`; `ms-fabric-orchestration` → `TEST_WORKSPACE_ID`;
+      `ms-fabric-dp-trip-report` → `TEST_WORKSPACE_ID`
+- [ ] Connection-ID variables set (8 total, Variables not Secrets) — see the sync doc
 - [ ] `ms-fabric-platform-core` → Settings → Actions → General → Access allows the other four
       repos to call its reusable workflow
 - [ ] `spn-fabric-test-deploy` is Contributor on all Test workspaces it deploys to (Landing,
-      Silver, Gold, Orchestration, Reporting)
+      Bronze, Silver, Gold, Orchestration, Reporting)
 - [ ] All four Fabric connections exist, using **Service principal** auth with
       `spn-fabric-test-deploy`'s credentials (not Organizational account)
 - [ ] All four connections are **shared** to `spn-fabric-test-deploy` (role **User**) — a
@@ -38,9 +40,9 @@ Full grant-by-grant reference, plus curl commands to verify each without running
 - [ ] No leftover placeholders anywhere:
       `grep -rn '<TEST-' */parameter.yml` across all five repos returns nothing
 - [ ] Every `$workspace.<name>...` reference uses a name that matches the "Topology" table in
-      the process doc exactly (`ws-test-landing-rjoose-v2`, `ws-test-dd-sustainability-silver-v2`,
-      `ws-test-dd-sustainability-gold-v2`) — a typo here fails loudly at deploy time, but it's
-      faster to catch by eye first
+      the process doc exactly (`ws-test-landing-rjoose-v2`, `Test-bronze`,
+      `ws-test-dd-sustainability-silver-v2`, `ws-test-dd-sustainability-gold-v2`) — a typo here
+      fails loudly at deploy time, but `python -m pytest` in platform-core checks it for free
 - [ ] `scripts/requirements.txt`'s pinned `fabric-cicd` version matches what
       `deploy-fabric-item.yml` and `debug_parameterization.py` (if you ran it) were tested
       against
@@ -49,19 +51,29 @@ Full grant-by-grant reference, plus curl commands to verify each without running
 
 Run in deploy order — each section assumes the previous ones already passed.
 
-### Ingestion (`ws-test-landing-rjoose-v2`, from `ms-fabric-ingestion`)
+### Landing (`ws-test-landing-rjoose-v2`, from `ms-fabric-ingestion`)
 
-- [ ] `deploy-test.yml` run is green
-- [ ] Workspace contains: `lh_landing_nyc_taxi` (Lakehouse), `lh_bronze_nyc_taxi` (Lakehouse),
-      `pl_landing_nyc_ingest` (DataPipeline), `pl_bronze_nyc_taxi` (DataPipeline),
-      `landing_bronze_copy_job` (CopyJob) — five items, no more, no fewer
-- [ ] Open `landing_bronze_copy_job` → its source points at *this* workspace's
-      `lh_landing_nyc_taxi`, destination at *this* workspace's `lh_bronze_nyc_taxi` (not a Dev
-      workspace — check the workspace name shown in the source/destination picker, not just
-      that it resolved without error)
+- [ ] `deploy-landing` job is green
+- [ ] Workspace contains: `lh_landing_nyc_taxi` (Lakehouse), `pl_landing_nyc_ingest`
+      (DataPipeline) — two items, no more, no fewer. Bronze items appearing here means the
+      `items-to-include` split didn't take effect
+- [ ] Only those two items remain. The pre-split deploy put all five here, so the three bronze
+      items are leftovers — orphan cleanup won't remove them, delete them by hand once
+      `Test-bronze` is confirmed good
+
+### Bronze (`Test-bronze`, from `ms-fabric-ingestion`)
+
+- [ ] `deploy-bronze` job is green (only starts after `deploy-landing` succeeds)
+- [ ] `spn-fabric-test-deploy` is Contributor on this workspace — it's newly in use and has
+      never been deployed to, so this grant is the likeliest first-run failure
+- [ ] Workspace contains: `lh_bronze_nyc_taxi` (Lakehouse), `pl_bronze_nyc_taxi`
+      (DataPipeline), `landing_bronze_copy_job` (CopyJob) — three items
+- [ ] Open `landing_bronze_copy_job` → its **source** points at `ws-test-landing-rjoose-v2`'s
+      `lh_landing_nyc_taxi` and its **destination** at *this* workspace's `lh_bronze_nyc_taxi`.
+      Source and destination should show **different workspaces** — that cross-workspace hop is
+      the point of the split, and both pointing here means the source rule didn't resolve
 - [ ] Open `pl_bronze_nyc_taxi` → the `copy_landing_bronze` activity's connection is the Test
-      copy-job connection you created (name matches what you gave it in step 3 of the setup
-      doc)
+      copy-job connection
 
 ### Silver (`ws-test-dd-sustainability-silver-v2`, from `ms-fabric-dd-trip-data`)
 
@@ -70,7 +82,7 @@ Run in deploy order — each section assumes the previous ones already passed.
       `nb_silver_yellow_cab_transform` (Notebook), `invoke_silver_transform` (DataPipeline)
 - [ ] Open `nb_silver_yellow_cab_transform` → the attached/default lakehouse shown in the
       notebook's lakehouse explorer is **this workspace's** `lh_silver_dd_trip_records`, and
-      the `known_lakehouses` list includes **Ingestion's** `lh_bronze_nyc_taxi` — both should
+      the `known_lakehouses` list includes **Bronze's** `lh_bronze_nyc_taxi` — both should
       show up as real, resolved lakehouse names, not raw GUIDs or "not found"
 - [ ] Open `invoke_silver_transform` → the `invoke_silver_transform_nb` activity's connection
       is the Test notebook connection you created for Silver
@@ -88,14 +100,16 @@ Run in deploy order — each section assumes the previous ones already passed.
 
 ### Orchestration (from `ms-fabric-orchestration`)
 
-- [ ] `deploy-test.yml` run is green (should only start after Ingestion, Silver, and Gold have
-      all deployed)
+- [ ] `deploy-test.yml` run is green (should only start after Landing, Bronze, Silver, and Gold
+      have all deployed)
 - [ ] Workspace contains: `pl_orch_trips` (DataPipeline) only
 - [ ] Open `pl_orch_trips` → each of the four activities resolves to the **Test** target, not
       Dev — click into `master_landing`, `master_bronze`, `master_silver`, `master_gold` one
-      at a time and confirm the **Workspace** and **Pipeline** dropdowns show the Test
-      workspace/pipeline names (`ws-test-landing-rjoose-v2` / `pl_landing_nyc_ingest`, etc.), not
-      blank/unresolved
+      at a time and confirm the **Workspace** and **Pipeline** dropdowns are populated
+- [ ] **`master_landing` and `master_bronze` must show *different* workspaces**
+      (`ws-test-landing-rjoose-v2` and `Test-bronze`). They share one workspace ID in Dev and are split
+      apart by two `key_value_replace` jsonpath rules; if both show the same workspace, those
+      rules didn't apply and the split silently collapsed
 - [ ] All four activities' connection is the Test pipeline-invoke connection from step 3
 
 ### Reporting (from `ms-fabric-dp-trip-report`)
@@ -113,8 +127,12 @@ Run in deploy order — each section assumes the previous ones already passed.
 
 Structural checks above confirm the wiring; this confirms it actually moves data.
 
-- [ ] Run `pl_landing_nyc_ingest` (Ingestion) → succeeds, a file lands in
-      `lh_landing_nyc_taxi`
+- [ ] **Precondition:** a source parquet (e.g. `yellow_tripdata_2026-01.parquet`) exists in
+      `lh_landing_nyc_taxi/Files`. Nothing in git puts it there — `pl_landing_nyc_ingest` is a
+      stub that only returns `trigger_value: "success"`, so upload the file manually before
+      running anything below, or every downstream step fails on a missing source
+- [ ] Run `pl_landing_nyc_ingest` (Ingestion) → succeeds (proves the pipeline runs; it does
+      **not** move any data)
 - [ ] Run `pl_bronze_nyc_taxi` (Ingestion) → succeeds, `dbo.yellow_cab_trip_data_bronze` in
       `lh_bronze_nyc_taxi` is populated, row count > 0
 - [ ] Run `invoke_silver_transform` (Silver) → succeeds, `dbo.yellow_cab_trip_silver` in

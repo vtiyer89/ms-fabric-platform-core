@@ -31,7 +31,11 @@ The shared deploy logic lives once, in `ms-fabric-platform-core`:
 ```
 ms-fabric-platform-core/
     scripts/deploy_fabric_item.py       # fabric-cicd wrapper, generic across all workspaces
+    scripts/debug_parameterization.py   # offline parameter.yml check, no credentials
+    scripts/debug_live_test.py          # real publish as your own user, not the SPN
     scripts/requirements.txt
+    scripts/requirements-dev.txt        # pytest, for tests/
+    tests/                              # guards + checks over the real parameter.yml files
     .github/workflows/deploy-fabric-item.yml   # reusable workflow (workflow_call)
 ```
 
@@ -72,13 +76,6 @@ ms-fabric-dp-trip-report/semantic_models/taxi_trip/parameter.yml
 *Access* → allow "Accessible from repositories in the `vtiyer89` organization" (or list the
 four caller repos explicitly). Without this, the other repos can't call its reusable workflow.
 
-> **Temporary deviation.** That setting isn't granted yet, so `ms-fabric-ingestion` and
-> `ms-fabric-dd-trip-data` currently *inline* the deploy instead: each carries its own copy of
-> `scripts/deploy_fabric_item.py` + `scripts/requirements.txt` and runs it directly, rather
-> than calling the reusable workflow. Both workflow files carry a comment saying so. Once
-> access is granted, revert them to the `uses:` form and delete the duplicated scripts —
-> until then those copies can drift from the canonical ones here.
-
 ## Cross-repo ordering isn't automated
 
 Within `ms-fabric-dd-trip-data`, gold's job `needs: deploy-silver` inside the same workflow
@@ -105,22 +102,28 @@ the exported Dev JSON — see git history of this file if you want the original 
 
 | Logical workspace | Test display name | Deployed from |
 |---|---|---|
-| Landing + Ingestion | `ws-test-landing-rjoose-v2` | `ms-fabric-ingestion` / `datasource_nyc_taxi` |
+| Landing | `ws-test-landing-rjoose-v2` | `ms-fabric-ingestion` / `datasource_nyc_taxi` (landing items) |
+| Bronze | `Test-bronze` | `ms-fabric-ingestion` / `datasource_nyc_taxi` (bronze items) |
 | Silver | `ws-test-dd-sustainability-silver-v2` | `ms-fabric-dd-trip-data` / `silver` |
 | Gold | `ws-test-dd-sustainability-gold-v2` | `ms-fabric-dd-trip-data` / `gold` |
 
-**Landing and Bronze are genuinely separate workspaces in the live tenant** (`Test-bronze` and
-`Test ingestion ws` both exist as their own workspace IDs), but by deliberate choice we deploy
-`ms-fabric-ingestion`'s entire `datasource_nyc_taxi` folder — landing lakehouse, bronze
-lakehouse, both pipelines, the copy job — as one unit into the Landing workspace
-(`ws-test-landing-rjoose-v2`) only. `Test-bronze` and `Test ingestion ws` sit unused. This keeps
-the deploy mechanics simple (one job, one `repository_directory`, one `workspace-id`) at the
-cost of Test's Ingestion layout not matching Dev's 1:1. If that divergence ever becomes a
-problem, splitting `ms-fabric-ingestion`'s deploy into two jobs (mirroring how
-`ms-fabric-dd-trip-data` already does Silver/Gold) is the fix — but it also requires either
-physically splitting `datasource_nyc_taxi`'s folder tree by workspace, or fabric-cicd's
-experimental `enable_items_to_include` selective-publish feature, since right now landing and
-bronze items live intermixed under one `repository_directory`.
+**Landing and Bronze are separate workspaces**, and `ms-fabric-ingestion` deploys to both —
+two jobs, `deploy-landing` then `deploy-bronze`. Both jobs point at the *same*
+`repository-directory` (`datasource_nyc_taxi`) and use the `items-to-include` input to select
+which items each publishes:
+
+| Job | Workspace | Publishes |
+|---|---|---|
+| `deploy-landing` | `ws-test-landing-rjoose-v2` | `lh_landing_nyc_taxi`, `pl_landing_nyc_ingest` |
+| `deploy-bronze` | `Test-bronze` | `lh_bronze_nyc_taxi`, `pl_bronze_nyc_taxi`, `landing_bronze_copy_job` |
+
+Sharing one directory avoids physically splitting the folder tree, which would have disturbed
+Dev's git integration. fabric-cicd resolves parameter rules only for items it actually
+publishes, so the landing job never evaluates bronze's cross-workspace lookups.
+
+The catch: fabric-cicd doesn't check that the two lists cover everything. An item named by no
+job is silently never deployed, and one named by both is published to both workspaces. The
+test suite in `tests/` asserts exact coverage — run it after adding any item to this repo.
 
 Every cross-workspace `parameter.yml` value now resolves **live** against this table via
 fabric-cicd's `$workspace.<name>.$id` / `$workspace.<name>.$items.<Type>.<Name>.$id`
@@ -240,9 +243,26 @@ script this than click through the portal each time.)
 All five `parameter.yml` files are filled in — no more `<TEST-...>` placeholders. Two
 different mechanisms are in play, depending on whether the value is a Fabric item or not:
 
-**Connections are static.** They're tenant/workspace objects, not deployable Fabric items, so
-there's no live-lookup variable for them. The four IDs from step 3 are pasted directly into
-each file's `TEST:` key and only need updating again if a connection is deleted/recreated.
+**Connections come from GitHub Variables.** They're tenant/workspace objects, not deployable
+Fabric items, so there's no live-lookup variable for them — they're the only values here that
+can't resolve themselves. Rather than hardcoding them, each `parameter.yml` references them as
+`$ENV:<NAME>` tokens:
+
+```yaml
+- find_value: "$ENV:DEV_GOLD_CONNECTION_ID"
+  replace_value:
+      DEV: "$ENV:DEV_GOLD_CONNECTION_ID"
+      TEST: "$ENV:TEST_GOLD_CONNECTION_ID"
+```
+
+The caller workflow passes them through the reusable workflow's `parameter-env-vars` input as
+`FABRIC_PARAM_<NAME>=...`; the deploy script re-exports each one under the `$ENV:`-prefixed
+name fabric-cicd scans for. Recreating a connection is then a Variables edit, not a commit.
+
+Note the **DEV** side is a variable too, including in `find_value` — which is the string
+matched against the Dev GUID baked into the item JSON. If that variable ever disagrees with
+what's actually in git, fabric-cicd skips the rule silently and ships the Dev GUID to Test, so
+the deploy script refuses to run when a `find_value` matches no item definition.
 
 **Everything else (workspace IDs, lakehouse IDs, pipeline IDs) resolves live**, via
 fabric-cicd's `$workspace.<name>.$id` and `$workspace.<name>.$items.<Type>.<Name>.$id`
@@ -260,22 +280,36 @@ table lives here anymore: a GUID never needs to be copied out of the Fabric port
 the deploy order load-bearing rather than just a good idea. Deploy in this sequence the first
 time (and any time a referenced workspace/item was deleted and recreated):
 
-1. `ms-fabric-ingestion` (no cross-workspace lookups — self-contained, deploys first)
-2. `ms-fabric-dd-trip-data` silver job (looks up Ingestion's bronze lakehouse)
-3. `ms-fabric-dd-trip-data` gold job (looks up Silver's lakehouse — `needs: deploy-silver`
+1. `ms-fabric-ingestion` landing job (no cross-workspace lookups — self-contained)
+2. `ms-fabric-ingestion` bronze job (the copy job's source looks up Landing's lakehouse —
+   `needs: deploy-landing` already enforces this within the one workflow)
+3. `ms-fabric-dd-trip-data` silver job (looks up **Bronze's** lakehouse)
+4. `ms-fabric-dd-trip-data` gold job (looks up Silver's lakehouse — `needs: deploy-silver`
    already enforces this within the one workflow)
-4. `ms-fabric-orchestration` (looks up pipelines in Ingestion, Silver, and Gold)
-5. `ms-fabric-dp-trip-report` (looks up Gold's lakehouse)
+5. `ms-fabric-orchestration` (looks up pipelines in Landing, Bronze, Silver, and Gold)
+6. `ms-fabric-dp-trip-report` (looks up Gold's lakehouse)
 
 Get the order wrong and the failure is loud, not silent — fabric-cicd errors out on an
 unresolvable `$workspace`/`$items` reference rather than deploying something broken.
 
-Before running the real workflow, fabric-cicd ships a local validation script for exactly
-this — checking a `parameter.yml` file's structure without deploying anything. It lives at
-`devtools/debug_parameterization.py` in the [fabric-cicd
-repo](https://github.com/microsoft/fabric-cicd); pull that file (matching the version pinned
-in `ms-fabric-platform-core/scripts/requirements.txt`) and run it against each `parameter.yml`
-before the first real deploy.
+Before running the real workflow, check each `parameter.yml` locally with
+`scripts/debug_parameterization.py` — no credentials needed. It runs the same guards the
+deploy runs, so a pass means CI won't refuse the run for a missing variable or a `find_value`
+that matches nothing:
+
+```bash
+cd ms-fabric-platform-core
+uv venv --python 3.11 .venv && source .venv/bin/activate   # fabric-cicd needs 3.10+
+uv pip install -r scripts/requirements.txt
+
+FABRIC_PARAM_DEV_SILVER_CONNECTION_ID=... FABRIC_PARAM_TEST_SILVER_CONNECTION_ID=... \
+python scripts/debug_parameterization.py \
+    --repository-directory ../ms-fabric-dd-trip-data/silver \
+    --items-in-scope Lakehouse,DataPipeline,Notebook
+```
+
+It does **not** resolve `$workspace`/`$items` — those need a live, credentialed run. For that,
+`scripts/debug_live_test.py` publishes for real, authenticated as you rather than the SPN.
 
 ## 5. Set up GitHub
 
@@ -306,11 +340,31 @@ a GitHub Environment):
 
 | Repo | Variable | Value |
 |---|---|---|
-| `ms-fabric-ingestion` | `TEST_WORKSPACE_ID` | Test Ingestion workspace ID |
+| `ms-fabric-ingestion` | `TEST_LANDING_WORKSPACE_ID` | Test Landing workspace ID |
+| ″ | `TEST_BRONZE_WORKSPACE_ID` | Test Bronze workspace ID |
 | `ms-fabric-dd-trip-data` | `TEST_SILVER_WORKSPACE_ID` | Test Silver workspace ID |
 | ″ | `TEST_GOLD_WORKSPACE_ID` | Test Gold workspace ID |
 | `ms-fabric-orchestration` | `TEST_WORKSPACE_ID` | Test Orchestration workspace ID |
 | `ms-fabric-dp-trip-report` | `TEST_WORKSPACE_ID` | Test Reporting workspace ID |
+
+Plus the connection IDs from step 3, one Dev and one Test per connection. These are
+**Variables, not Secrets** — they're interpolated into a workflow input and appear in run logs:
+
+| Repo | Variable | Value |
+|---|---|---|
+| `ms-fabric-ingestion` | `DEV_COPY_JOB_CONNECTION_ID` | Dev copy-job connection ID |
+| ″ | `TEST_COPY_JOB_CONNECTION_ID` | Test copy-job connection ID |
+| `ms-fabric-dd-trip-data` | `DEV_SILVER_CONNECTION_ID` | Dev silver notebook connection ID |
+| ″ | `TEST_SILVER_CONNECTION_ID` | Test silver notebook connection ID |
+| ″ | `DEV_GOLD_CONNECTION_ID` | Dev gold notebook connection ID |
+| ″ | `TEST_GOLD_CONNECTION_ID` | Test gold notebook connection ID |
+| `ms-fabric-orchestration` | `DEV_PIPELINE_INVOKE_CONNECTION_ID` | Dev pipeline-invoke connection ID |
+| ″ | `TEST_PIPELINE_INVOKE_CONNECTION_ID` | Test pipeline-invoke connection ID |
+
+`ms-fabric-dp-trip-report` needs none — the semantic model uses no connection.
+
+A missing or empty one stops the deploy with a named error rather than publishing a broken
+value, so a forgotten variable fails loudly instead of silently.
 
 If you'd rather gate Test deploys behind manual approval, use a GitHub **Environment** named
 `test` in each caller repo instead (Settings → Environments), move these variables and

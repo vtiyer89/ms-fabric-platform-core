@@ -29,10 +29,30 @@ on:
         required: true
         type: string
         description: "Comma-separated Fabric item types, e.g. Lakehouse,DataPipeline,Notebook"
+      items-to-include:
+        required: false
+        type: string
+        default: ""
+        description: |
+          Optional comma-separated "item_name.ItemType" list. When set, only these items are
+          published, letting one repository-directory feed two workspaces (e.g. ingestion's
+          landing and bronze). Every item in the directory must be covered by exactly one
+          caller job, or the uncovered ones are never deployed.
       platform-core-ref:
         required: false
         type: string
         default: main
+      parameter-env-vars:
+        required: false
+        type: string
+        default: ""
+        description: |
+          Newline-separated FABRIC_PARAM_<NAME>=<value> pairs, exported before the deploy so
+          parameter.yml can reference them as $ENV:<NAME>. Used for connection IDs, the only
+          values fabric-cicd can't resolve live. Callers pass repo Variables, e.g.:
+            parameter-env-vars: |
+              FABRIC_PARAM_DEV_SILVER_CONNECTION_ID=${{ vars.DEV_SILVER_CONNECTION_ID }}
+          Values are visible in workflow logs, so pass Variables here, never Secrets.
     secrets:
       AZURE_CLIENT_ID:
         required: true
@@ -63,12 +83,21 @@ jobs:
 
       - run: pip install -r platform-core/scripts/requirements.txt
 
+      - name: Export parameter.yml environment variables
+        if: inputs.parameter-env-vars != ''
+        run: |
+          echo "${{ inputs.parameter-env-vars }}" | while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            echo "$line" >> "$GITHUB_ENV"
+          done
+
       - run: |
           python platform-core/scripts/deploy_fabric_item.py \
             --workspace-id "${{ inputs.workspace-id }}" \
             --environment "${{ inputs.environment-name }}" \
             --repository-directory "item-repo/${{ inputs.repository-directory }}" \
-            --items-in-scope "${{ inputs.items-in-scope }}"
+            --items-in-scope "${{ inputs.items-in-scope }}" \
+            --items-to-include "${{ inputs.items-to-include }}"
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
