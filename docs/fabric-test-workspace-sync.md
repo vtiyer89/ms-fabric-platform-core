@@ -72,9 +72,32 @@ ms-fabric-dp-trip-report/semantic_models/taxi_trip/parameter.yml
    `item-repo/<repository-directory>`, authenticating as the shared service principal and
    publishing to the workspace ID passed in.
 
-**One-time setting required in `ms-fabric-platform-core`**: Settings → Actions → General →
+### Two separate things must be permitted
+
+Calling the reusable workflow and reading this repo's files are different operations with
+different failures. Both are needed, and fixing one doesn't fix the other.
+
+**1. Resolving the workflow** — `ms-fabric-platform-core` → Settings → Actions → General →
 *Access* → allow "Accessible from repositories in the `vtiyer89` organization" (or list the
-four caller repos explicitly). Without this, the other repos can't call its reusable workflow.
+four caller repos). Without it, callers fail with **"workflow was not found"** — the same
+message GitHub gives for a typo'd path, so it's ambiguous by design.
+
+**2. Checking this repo out onto the runner** — the reusable workflow runs
+`actions/checkout` against this repo to get `scripts/deploy_fabric_item.py`. Actions loads the
+workflow *YAML* for you but not the repo *contents*, so this checkout is a real clone. It
+defaults to `GITHUB_TOKEN`, which is scoped to the **calling** repository and cannot read
+another private repo — even in the same org. That fails with **"Repository not found"** at the
+fetch step, after the workflow has already parsed and started.
+
+Pick one fix for #2:
+
+| Option | What to do | Trade-off |
+|---|---|---|
+| **Token** (default) | Create a fine-grained PAT with *Contents: Read* on `ms-fabric-platform-core`. Add it as an **org secret** named `PLATFORM_CORE_TOKEN`, scoped to the four caller repos. Callers already use `secrets: inherit`, so nothing else changes. | A second credential to rotate; PATs expire like the SPN secret |
+| **Public repo** | Make `ms-fabric-platform-core` public. `GITHUB_TOKEN` reads public repos, and `PLATFORM_CORE_TOKEN` becomes unnecessary. | The docs here name the service principal and contain workspace, connection and capacity GUIDs. Those are identifiers, not credentials — but they describe the deployment's security posture, so scrub the docs first if that matters |
+
+The workflow takes `PLATFORM_CORE_TOKEN` as an *optional* secret and falls back to
+`github.token`, so the public route needs no workflow edit.
 
 ## Cross-repo ordering isn't automated
 
@@ -318,19 +341,28 @@ The service principal credentials are identical across all four caller repos, so
 variables differ per repo (per workflow, actually — `ms-fabric-dd-trip-data` needs two), so
 those stay at the repo level.
 
-### Org-level secrets (shared identity)
+### Secrets (the shared identity)
 
-GitHub → your org (`vtiyer89`) → **Settings → Secrets and variables → Actions → New
-organization secret**. Set **Repository access** to the four caller repos (`ms-fabric-ingestion`,
-`ms-fabric-dd-trip-data`, `ms-fabric-orchestration`, `ms-fabric-dp-trip-report`) — no need to
-grant `ms-fabric-platform-core` access itself, since secrets flow through the *calling* repo's
-`secrets: inherit`, not the reusable workflow's own repo.
+> **`vtiyer89` is a personal account, not a GitHub organization.** Organization secrets are an
+> org-only feature, so there is no account-level secret store here — every secret must be added
+> to **each caller repo individually**, and rotated in each. Any instruction elsewhere to create
+> an "organization secret scoped to the four repos" does not apply to this account.
 
-| Org secret | Value |
-|---|---|
-| `AZURE_CLIENT_ID` | the service principal's Application (client) ID |
-| `AZURE_CLIENT_SECRET` | the client secret value from step 1 |
-| `AZURE_TENANT_ID` | your Entra tenant ID |
+In each of the four caller repos: **Settings → Secrets and variables → Actions → New repository
+secret**.
+
+| Secret | Value | Where |
+|---|---|---|
+| `AZURE_CLIENT_ID` | the service principal's Application (client) ID | all 4 caller repos |
+| `AZURE_CLIENT_SECRET` | the client secret value from step 1 | all 4 caller repos |
+| `AZURE_TENANT_ID` | your Entra tenant ID | all 4 caller repos |
+| `PLATFORM_CORE_TOKEN` | PAT with *Contents: Read* on `ms-fabric-platform-core` | all 4 caller repos — **only if platform-core stays private** |
+
+That last row is the argument for making `ms-fabric-platform-core` public: it removes a
+credential that would otherwise be duplicated across four repos and expire on its own schedule.
+
+`ms-fabric-platform-core` itself needs no secrets — they flow from the *calling* repo through
+`secrets: inherit`, not from the repo that defines the reusable workflow.
 
 ### Repo-level variables (per workspace)
 

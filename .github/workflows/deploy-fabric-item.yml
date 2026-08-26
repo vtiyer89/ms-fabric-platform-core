@@ -55,6 +55,14 @@ on:
           the workflow_call block, which fails the whole workflow at parse time. Values appear
           in workflow logs, so pass Variables here, never Secrets.
     secrets:
+      PLATFORM_CORE_TOKEN:
+        required: false
+        description: >
+          Token with Contents-Read on ms-fabric-platform-core, used only to check this repo out
+          onto the runner. Required while platform-core is PRIVATE - the default GITHUB_TOKEN is
+          scoped to the calling repository and cannot read another private repo, which fails as
+          "Repository not found". Not needed if platform-core is public. Callers using
+          'secrets: inherit' pick this up automatically from an org secret.
       AZURE_CLIENT_ID:
         required: true
       AZURE_CLIENT_SECRET:
@@ -77,6 +85,16 @@ jobs:
           repository: vtiyer89/ms-fabric-platform-core
           ref: ${{ inputs.platform-core-ref }}
           path: platform-core
+          # Falls back to GITHUB_TOKEN, which only works if platform-core is public.
+          token: ${{ secrets.PLATFORM_CORE_TOKEN || github.token }}
+
+      - name: Confirm the shared script was checked out
+        run: |
+          if [ ! -f platform-core/scripts/deploy_fabric_item.py ]; then
+            echo "[error] platform-core checked out but scripts/deploy_fabric_item.py is missing."
+            echo "[error] Check the platform-core-ref input (currently '${{ inputs.platform-core-ref }}')."
+            exit 1
+          fi
 
       - uses: actions/setup-python@v5
         with:

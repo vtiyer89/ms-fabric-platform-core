@@ -13,9 +13,12 @@ recreated.
 
 ## 0. Prerequisites still in place
 
-- [ ] Org secrets present and scoped to all four caller repos: `AZURE_CLIENT_ID`,
-      `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID` (Settings → Secrets and variables → Actions,
-      org level)
+- [ ] Secrets present in **each** of the four caller repos: `AZURE_CLIENT_ID`,
+      `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID` (Settings → Secrets and variables → Actions).
+      `vtiyer89` is a personal account, so there are no org-level secrets — each repo carries
+      its own copy
+- [ ] If `ms-fabric-platform-core` is private: `PLATFORM_CORE_TOKEN` present in each caller
+      repo too, and not expired. Not needed if that repo is public
 - [ ] Client secret hasn't expired (check its expiry date in Entra ID — nothing surfaces this
       until a deploy suddenly fails with an auth error)
 - [ ] Repo variables set: `ms-fabric-ingestion` → `TEST_LANDING_WORKSPACE_ID` +
