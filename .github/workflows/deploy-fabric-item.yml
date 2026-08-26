@@ -46,13 +46,14 @@ on:
         required: false
         type: string
         default: ""
-        description: |
+        description: >
           Newline-separated FABRIC_PARAM_<NAME>=<value> pairs, exported before the deploy so
           parameter.yml can reference them as $ENV:<NAME>. Used for connection IDs, the only
-          values fabric-cicd can't resolve live. Callers pass repo Variables, e.g.:
-            parameter-env-vars: |
-              FABRIC_PARAM_DEV_SILVER_CONNECTION_ID=${{ vars.DEV_SILVER_CONNECTION_ID }}
-          Values are visible in workflow logs, so pass Variables here, never Secrets.
+          values fabric-cicd can't resolve live. Each caller supplies one line per variable,
+          taking the value from a repo Variable. NOTE - do not put a GitHub expression in this
+          description; Actions evaluates expressions here and 'vars' is not a valid context in
+          the workflow_call block, which fails the whole workflow at parse time. Values appear
+          in workflow logs, so pass Variables here, never Secrets.
     secrets:
       AZURE_CLIENT_ID:
         required: true
