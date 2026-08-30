@@ -43,7 +43,7 @@ Full grant-by-grant reference, plus curl commands to verify each without running
 - [ ] No leftover placeholders anywhere:
       `grep -rn '<TEST-' */parameter.yml` across all five repos returns nothing
 - [ ] Every `$workspace.<name>...` reference uses a name that matches the "Topology" table in
-      the process doc exactly (`ws-test-landing-rjoose-v2`, `Test-bronze`,
+      the process doc exactly (`ws-test-landing-rjoose-v2`, `ws-test-bronze-rjoose-v2`,
       `ws-test-dd-sustainability-silver-v2`, `ws-test-dd-sustainability-gold-v2`) — a typo here
       fails loudly at deploy time, but `python -m pytest` in platform-core checks it for free
 - [ ] `scripts/requirements.txt`'s pinned `fabric-cicd` version matches what
@@ -62,9 +62,9 @@ Run in deploy order — each section assumes the previous ones already passed.
       `items-to-include` split didn't take effect
 - [ ] Only those two items remain. The pre-split deploy put all five here, so the three bronze
       items are leftovers — orphan cleanup won't remove them, delete them by hand once
-      `Test-bronze` is confirmed good
+      `ws-test-bronze-rjoose-v2` is confirmed good
 
-### Bronze (`Test-bronze`, from `ms-fabric-ingestion`)
+### Bronze (`ws-test-bronze-rjoose-v2`, from `ms-fabric-ingestion`)
 
 - [ ] `deploy-bronze` job is green (only starts after `deploy-landing` succeeds)
 - [ ] `spn-fabric-test-deploy` is Contributor on this workspace — it's newly in use and has
@@ -110,7 +110,7 @@ Run in deploy order — each section assumes the previous ones already passed.
       Dev — click into `master_landing`, `master_bronze`, `master_silver`, `master_gold` one
       at a time and confirm the **Workspace** and **Pipeline** dropdowns are populated
 - [ ] **`master_landing` and `master_bronze` must show *different* workspaces**
-      (`ws-test-landing-rjoose-v2` and `Test-bronze`). They share one workspace ID in Dev and are split
+      (`ws-test-landing-rjoose-v2` and `ws-test-bronze-rjoose-v2`). They share one workspace ID in Dev and are split
       apart by two `key_value_replace` jsonpath rules; if both show the same workspace, those
       rules didn't apply and the split silently collapsed
 - [ ] All four activities' connection is the Test pipeline-invoke connection from step 3

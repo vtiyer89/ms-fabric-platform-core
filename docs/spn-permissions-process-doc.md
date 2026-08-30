@@ -98,7 +98,7 @@ Member adds the ability to grant others access, also unnecessary.
 | Test workspace | Why | Status |
 |---|---|---|
 | `ws-test-landing-rjoose-v2` | deploy target (landing job) | ✅ granted, proven in CI |
-| `Test-bronze` | deploy target (bronze job) | ❓ **grant needed** — newly in use, never deployed to |
+| `ws-test-bronze-rjoose-v2` | deploy target (bronze job) | ❓ **grant needed** — newly in use, never deployed to |
 | `ws-test-dd-sustainability-silver-v2` | deploy target | ❓ **re-grant needed** — workspace was recreated; v1's grant did not carry over |
 | `ws-test-dd-sustainability-gold-v2` | deploy target | ❓ **re-grant needed** — same |
 | Orchestration (`860d3864-…`) | deploy target **and** runtime invoke source | ❓ unverified |
@@ -109,7 +109,7 @@ Roles do not survive workspace deletion. Any time a workspace is recreated, re-a
 ### Cross-workspace read access
 
 Deploying Silver runs a live lookup into the *Bronze* workspace to resolve
-`$workspace.Test-bronze.$items.Lakehouse.lh_bronze_nyc_taxi.$id`. That lookup
+`$workspace.ws-test-bronze-rjoose-v2.$items.Lakehouse.lh_bronze_nyc_taxi.$id`. That lookup
 requires the SPN to have a role on the workspace being **read**, not just the one being
 written. Contributor on all six satisfies this — no extra grant — but it's the reason a
 lookup can fail with a permissions error rather than a "not found" error.

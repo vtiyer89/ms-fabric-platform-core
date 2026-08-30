@@ -126,7 +126,7 @@ the exported Dev JSON — see git history of this file if you want the original 
 | Logical workspace | Test display name | Deployed from |
 |---|---|---|
 | Landing | `ws-test-landing-rjoose-v2` | `ms-fabric-ingestion` / `datasource_nyc_taxi` (landing items) |
-| Bronze | `Test-bronze` | `ms-fabric-ingestion` / `datasource_nyc_taxi` (bronze items) |
+| Bronze | `ws-test-bronze-rjoose-v2` | `ms-fabric-ingestion` / `datasource_nyc_taxi` (bronze items) |
 | Silver | `ws-test-dd-sustainability-silver-v2` | `ms-fabric-dd-trip-data` / `silver` |
 | Gold | `ws-test-dd-sustainability-gold-v2` | `ms-fabric-dd-trip-data` / `gold` |
 
@@ -138,7 +138,7 @@ which items each publishes:
 | Job | Workspace | Publishes |
 |---|---|---|
 | `deploy-landing` | `ws-test-landing-rjoose-v2` | `lh_landing_nyc_taxi`, `pl_landing_nyc_ingest` |
-| `deploy-bronze` | `Test-bronze` | `lh_bronze_nyc_taxi`, `pl_bronze_nyc_taxi`, `landing_bronze_copy_job` |
+| `deploy-bronze` | `ws-test-bronze-rjoose-v2` | `lh_bronze_nyc_taxi`, `pl_bronze_nyc_taxi`, `landing_bronze_copy_job` |
 
 Sharing one directory avoids physically splitting the folder tree, which would have disturbed
 Dev's git integration. fabric-cicd resolves parameter rules only for items it actually

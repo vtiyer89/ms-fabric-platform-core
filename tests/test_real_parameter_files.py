@@ -23,7 +23,7 @@ pytestmark = pytest.mark.skipif(
 # A typo here fails loudly at deploy time, but catching it now is cheaper. Bug 7.6.
 KNOWN_WORKSPACES = {
     "ws-test-landing-rjoose-v2",
-    "Test-bronze",
+    "ws-test-bronze-rjoose-v2",
     "ws-test-dd-sustainability-silver-v2",
     "ws-test-dd-sustainability-gold-v2",
 }
