@@ -102,13 +102,28 @@ jobs:
 
       - run: pip install -r platform-core/scripts/requirements.txt
 
+      # Always runs, even with nothing to export, so "no variables supplied" is visible in the
+      # log rather than an invisible skipped step. The input goes through env: rather than being
+      # interpolated into the script, so its contents can't be parsed as shell.
       - name: Export parameter.yml environment variables
-        if: inputs.parameter-env-vars != ''
+        env:
+          PARAMETER_ENV_VARS: ${{ inputs.parameter-env-vars }}
         run: |
-          echo "${{ inputs.parameter-env-vars }}" | while IFS= read -r line; do
-            [ -z "$line" ] && continue
+          exported=0
+          while IFS= read -r line; do
+            case "$line" in ''|'#'*) continue ;; esac
             echo "$line" >> "$GITHUB_ENV"
-          done
+            echo "  exported ${line%%=*}"
+            exported=$((exported + 1))
+          done <<< "$PARAMETER_ENV_VARS"
+          if [ "$exported" -eq 0 ]; then
+            echo "No parameter.yml environment variables supplied by the caller."
+            echo "If this repo's parameter.yml uses \$ENV: tokens, the deploy will stop at the"
+            echo "next step naming the missing variables. Every job sharing a parameter.yml"
+            echo "needs them, even jobs whose items-to-include don't use the value."
+          else
+            echo "Exported $exported variable(s) for parameter.yml."
+          fi
 
       - run: |
           python platform-core/scripts/deploy_fabric_item.py \

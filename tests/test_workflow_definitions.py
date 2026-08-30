@@ -68,3 +68,36 @@ def test_callers_only_pass_inputs_the_reusable_workflow_declares(workflow):
             continue
         unknown = set(job.get("with", {})) - declared
         assert not unknown, f"passes inputs the reusable workflow doesn't declare: {unknown}"
+
+
+@pytest.mark.skipif(not CALLERS, reason="caller repos not cloned alongside platform-core")
+@pytest.mark.parametrize("workflow", CALLERS, ids=lambda p: p.parts[-4])
+def test_every_job_supplies_all_tokens_its_parameter_file_needs(workflow):
+    """Checked per job, not per repo.
+
+    $ENV: tokens are resolved for the whole parameter.yml before fabric-cicd parses it, and the
+    deploy script's guard scans the whole file — so a job needs every token in the file it
+    points at, even ones only used by items outside its items-to-include list.
+
+    ms-fabric-ingestion is where this bites: deploy-landing and deploy-bronze share one
+    parameter.yml, and only the copy job uses the connection. Comparing per repo hides it,
+    because the other job supplies the variables.
+    """
+    repo_root = workflow.parents[2]
+    jobs = yaml.safe_load(workflow.read_text())["jobs"]
+
+    for job_name, job in jobs.items():
+        directory = (job.get("with") or {}).get("repository-directory")
+        if not directory:
+            continue
+        parameter_file = repo_root / directory / "parameter.yml"
+        if not parameter_file.exists():
+            continue
+
+        needed = set(re.findall(r"\$ENV:([A-Za-z_][A-Za-z0-9_]*)", parameter_file.read_text()))
+        supplied = set(re.findall(r"FABRIC_PARAM_([A-Z_]+)", (job.get("with") or {}).get("parameter-env-vars", "")))
+
+        assert not (needed - supplied), (
+            f"job '{job_name}' points at {directory}/parameter.yml, which needs "
+            f"{sorted(needed - supplied)}, but the job doesn't supply them"
+        )
