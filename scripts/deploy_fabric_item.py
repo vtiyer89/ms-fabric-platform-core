@@ -151,6 +151,21 @@ def assert_workspace_id_supplied(workspace_id: str) -> None:
         )
 
 
+def enable_selective_publish_flags() -> None:
+    """Turn on both flags items_to_include needs.
+
+    fabric-cicd gates selective publishing behind a specific flag AND the general experimental
+    one, and rejects the run if either is missing:
+    "Feature flags 'enable_experimental_features' and 'enable_items_to_include' must be set."
+
+    It's experimental because an incomplete list can leave a dependency unpublished. Safe here
+    only because the split follows a real workspace boundary and every item in the directory is
+    published by exactly one caller job — which the test suite checks.
+    """
+    append_feature_flag("enable_experimental_features")
+    append_feature_flag("enable_items_to_include")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Deploy a Fabric workspace's items via fabric-cicd.")
     parser.add_argument("--workspace-id", required=True)
@@ -174,10 +189,7 @@ def main():
 
     append_feature_flag("enable_environment_variable_replacement")
     if items_to_include:
-        # Selective publish is experimental upstream: it can leave a dependency unpublished if
-        # the list is incomplete. Safe here only because the split is along a real workspace
-        # boundary and every item is published by exactly one job.
-        append_feature_flag("enable_items_to_include")
+        enable_selective_publish_flags()
     provided = inject_parameter_env_vars()
     assert_all_tokens_resolvable(args.repository_directory, provided)
     assert_find_values_present(args.repository_directory)
