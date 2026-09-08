@@ -1,0 +1,165 @@
+# Shared deploy logic for all ms-fabric-* repos (Azure DevOps).
+#
+# ADO equivalent of the GitHub Actions reusable workflow
+# (.github/workflows/deploy-fabric-item.yml). Emits ONE job per invocation, so callers can
+# chain them with dependsOn the way the Actions callers used `needs:`.
+#
+# Callers must declare the platform-core repository resource themselves — `resources:` is only
+# legal at the root of a pipeline, never inside a template:
+#
+#   resources:
+#     repositories:
+#       - repository: platform-core
+#         type: git
+#         name: <Project>/ms-fabric-platform-core
+#         ref: refs/heads/main
+#
+#   extends / jobs:
+#     - template: pipelines/templates/deploy-fabric-item.yml@platform-core
+#
+# The alias `platform-core` is what `- checkout: platform-core` below resolves against.
+
+parameters:
+  - name: jobName
+    type: string
+    displayName: "Job id. Must be unique within the pipeline and A-Za-z0-9_ only."
+
+  - name: jobDisplayName
+    type: string
+    default: ""
+
+  - name: dependsOn
+    type: object
+    default: []
+    displayName: "Job ids this one waits for. Deploy order is load-bearing — see docs."
+
+  - name: workspaceId
+    type: string
+    displayName: "Target Fabric workspace GUID. Comes from a variable group, e.g. $(TEST_SILVER_WORKSPACE_ID)."
+
+  - name: environmentName
+    type: string
+    default: TEST
+    displayName: "Must match a key under replace_value in the caller's parameter.yml."
+
+  - name: repositoryDirectory
+    type: string
+    displayName: "Path within the calling repo holding that workspace's items + parameter.yml."
+
+  - name: itemsInScope
+    type: string
+    displayName: "Comma-separated Fabric item types, e.g. Lakehouse,DataPipeline,Notebook"
+
+  - name: itemsToInclude
+    type: string
+    default: ""
+    displayName: >
+      Optional comma-separated "item_name.ItemType" list. When set, only these items publish,
+      letting one repositoryDirectory feed two workspaces (ingestion's landing/bronze split).
+      Every item in the directory must be covered by exactly one job, or the uncovered ones
+      are silently never deployed. tests/test_items_to_include_coverage.py asserts this.
+
+  - name: parameterEnvVars
+    type: object
+    default: {}
+    displayName: >
+      Map of NAME: value exported as FABRIC_PARAM_<NAME>, which the deploy script re-exports as
+      the "$ENV:<NAME>" tokens parameter.yml references. Used for connection IDs — the only
+      values fabric-cicd cannot resolve live. Pass NON-secret variable-group values only:
+      these are ordinary pipeline variables and appear in the job environment.
+
+  - name: variableGroups
+    type: object
+    default: []
+    displayName: "Variable groups to link, e.g. [fabric-cicd-common, fabric-ingestion]."
+
+  - name: vmImage
+    type: string
+    default: ubuntu-latest
+
+  - name: pythonVersion
+    type: string
+    default: "3.11"
+    displayName: "3.10+ required — fabric-cicd 1.3.0 uses PEP 604 unions and crashes on 3.9."
+
+jobs:
+  - job: ${{ parameters.jobName }}
+    displayName: ${{ coalesce(parameters.jobDisplayName, parameters.jobName) }}
+    dependsOn: ${{ parameters.dependsOn }}
+    pool:
+      vmImage: ${{ parameters.vmImage }}
+
+    variables:
+      - ${{ each groupName in parameters.variableGroups }}:
+          - group: ${{ groupName }}
+
+    steps:
+      # Both repos are checked out side by side. `path:` is relative to $(Agent.BuildDirectory),
+      # and $(Build.SourcesDirectory) is $(Agent.BuildDirectory)/s — so these land at
+      # $(Build.SourcesDirectory)/item-repo and .../platform-core. Pinning the paths explicitly
+      # avoids depending on ADO's default multi-checkout folder naming.
+      - checkout: self
+        path: s/item-repo
+        displayName: "Checkout calling repo"
+
+      - checkout: platform-core
+        path: s/platform-core
+        displayName: "Checkout ms-fabric-platform-core (shared deploy script)"
+
+      - bash: |
+          set -euo pipefail
+          if [ ! -f "$(Build.SourcesDirectory)/platform-core/scripts/deploy_fabric_item.py" ]; then
+            echo "[error] platform-core checked out but scripts/deploy_fabric_item.py is missing."
+            echo "[error] Check the 'ref:' on the platform-core repository resource in this pipeline."
+            exit 1
+          fi
+          echo "Shared deploy script present."
+        displayName: "Confirm the shared script was checked out"
+
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: ${{ parameters.pythonVersion }}
+        displayName: "Use Python ${{ parameters.pythonVersion }}"
+
+      - bash: pip install -r "$(Build.SourcesDirectory)/platform-core/scripts/requirements.txt"
+        displayName: "Install fabric-cicd"
+
+      # Names only — never values. The values are connection GUIDs, and echoing them into
+      # the log is exactly the habit that leaks a secret the day someone passes one by mistake.
+      # Read from the real environment at runtime: ${{ each }} drives YAML structure, so it
+      # cannot iterate inside a script block.
+      - bash: |
+          set -euo pipefail
+          found=$(env | grep '^FABRIC_PARAM_' | cut -d= -f1 | sort || true)
+          if [ -z "$found" ]; then
+            echo "No parameter.yml variables supplied by the caller."
+            echo "If this repo's parameter.yml uses \$ENV: tokens, the deploy stops at the next"
+            echo "step naming the missing variables. Every job sharing a parameter.yml needs"
+            echo "them all, even a job whose itemsToInclude does not use the value."
+          else
+            echo "Variables supplied to parameter.yml:"
+            echo "$found" | sed 's/^/  /'
+          fi
+        displayName: "List parameter.yml variables"
+        env:
+          ${{ each kv in parameters.parameterEnvVars }}:
+            ${{ format('FABRIC_PARAM_{0}', kv.key) }}: ${{ kv.value }}
+
+      - bash: |
+          set -euo pipefail
+          python "$(Build.SourcesDirectory)/platform-core/scripts/deploy_fabric_item.py" \
+            --workspace-id "${{ parameters.workspaceId }}" \
+            --environment "${{ parameters.environmentName }}" \
+            --repository-directory "$(Build.SourcesDirectory)/item-repo/${{ parameters.repositoryDirectory }}" \
+            --items-in-scope "${{ parameters.itemsInScope }}" \
+            --items-to-include "${{ parameters.itemsToInclude }}"
+        displayName: "Deploy to ${{ parameters.environmentName }}"
+        env:
+          # AZURE_CLIENT_SECRET is a SECRET variable in the common group. ADO deliberately does
+          # not map secret variables into the step environment automatically — without this
+          # explicit line it arrives empty and ClientSecretCredential fails at auth time.
+          AZURE_CLIENT_ID: $(AZURE_CLIENT_ID)
+          AZURE_CLIENT_SECRET: $(AZURE_CLIENT_SECRET)
+          AZURE_TENANT_ID: $(AZURE_TENANT_ID)
+          ${{ each kv in parameters.parameterEnvVars }}:
+            ${{ format('FABRIC_PARAM_{0}', kv.key) }}: ${{ kv.value }}
