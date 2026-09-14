@@ -38,6 +38,21 @@ on:
           published, letting one repository-directory feed two workspaces (e.g. ingestion's
           landing and bronze). Every item in the directory must be covered by exactly one
           caller job, or the uncovered ones are never deployed.
+      platform-workspace-id:
+        required: false
+        type: string
+        default: ""
+        description: >
+          Platform workspace holding lh_platform_metadata and nb_seed_metadata. When set, the
+          metadata table is re-seeded after a successful deploy. Leave empty to skip seeding,
+          which leaves the table holding the PREVIOUS run's GUIDs with nothing saying so.
+      seed-metadata:
+        required: false
+        type: boolean
+        default: true
+        description: >
+          Run the seed step after deploying. On by default: parameter.yml re-resolved on every
+          deploy automatically, a metadata table does not.
       platform-core-ref:
         required: false
         type: string
@@ -136,3 +151,26 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
+      # --allow-unresolved because a per-repo seed necessarily sees a partly-deployed estate:
+      # seeding after ingestion, silver's lakehouse does not exist yet. Unresolved names are
+      # printed, not swallowed. Once every repo has deployed, a strict seed should come back
+      # clean — anything still unresolved then is a real failure.
+      - name: Seed the metadata table
+        if: ${{ inputs.seed-metadata && inputs.platform-workspace-id != '' }}
+        run: |
+          python platform-core/scripts/run_seed_metadata.py \
+            --workspace-id "${{ inputs.platform-workspace-id }}" \
+            --environment "${{ inputs.environment-name }}" \
+            --allow-unresolved
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
+      - name: Warn when seeding was skipped
+        if: ${{ !inputs.seed-metadata || inputs.platform-workspace-id == '' }}
+        run: |
+          echo "::warning::Metadata table NOT re-seeded. It still holds the previous run's"
+          echo "::warning::GUIDs, which may point at items that were deleted and recreated."
+          echo "::warning::Set platform-workspace-id (repo Variable FABRIC_PLATFORM_WORKSPACE_ID)."

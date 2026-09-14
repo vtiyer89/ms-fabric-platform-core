@@ -95,7 +95,7 @@ def resolve_notebook_id(session, workspace_id):
     return match["id"]
 
 
-def start_run(session, workspace_id, notebook_id, environment, env_map_b64):
+def start_run(session, workspace_id, notebook_id, environment, env_map_b64, allow_unresolved):
     """Start the notebook and return the run-instance URL from the Location header."""
     response = session.post(
         f"{FABRIC_API}/workspaces/{workspace_id}/items/{notebook_id}/jobs/instances",
@@ -105,6 +105,7 @@ def start_run(session, workspace_id, notebook_id, environment, env_map_b64):
                 "parameters": {
                     "environment": {"value": environment, "type": "string"},
                     "environment_map_b64": {"value": env_map_b64, "type": "string"},
+                    "allow_unresolved": {"value": str(allow_unresolved).lower(), "type": "string"},
                 }
             }
         },
@@ -150,6 +151,15 @@ def main():
         help="Platform workspace holding nb_seed_metadata. Defaults to FABRIC_PLATFORM_WORKSPACE_ID.",
     )
     parser.add_argument("--environment", required=True, help="Must match an environment map, e.g. TEST")
+    parser.add_argument(
+        "--allow-unresolved",
+        action="store_true",
+        help=(
+            "Seed whatever resolves and report the rest, instead of refusing to write. Required "
+            "for a per-repo seed against a partly-deployed environment; a full-estate seed "
+            "should run without it."
+        ),
+    )
     parser.add_argument("--timeout-seconds", type=int, default=1800)
     parser.add_argument("--poll-seconds", type=int, default=15)
     args = parser.parse_args()
@@ -170,7 +180,9 @@ def main():
     notebook_id = resolve_notebook_id(session, args.workspace_id)
     print(f"[info] seeding {args.environment} via {SEED_NOTEBOOK} ({notebook_id})")
 
-    run_url = start_run(session, args.workspace_id, notebook_id, args.environment, env_map_b64)
+    run_url = start_run(
+        session, args.workspace_id, notebook_id, args.environment, env_map_b64, args.allow_unresolved
+    )
     result = wait_for(session, run_url, args.timeout_seconds, args.poll_seconds)
 
     if result.get("status") != "Completed":

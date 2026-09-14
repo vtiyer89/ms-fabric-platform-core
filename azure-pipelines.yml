@@ -1,0 +1,36 @@
+# Deploy ms-fabric-platform-core's own Fabric items to Test (Azure DevOps).
+#
+# platform/ holds lh_platform_metadata (the md_* tables) and nb_seed_metadata (the seeder).
+#
+# THIS MUST DEPLOY BEFORE ANY WORKLOAD REPO. Every workload lakehouse carries OneLake shortcuts
+# pointing at lh_platform_metadata, and every workload notebook reads the md_* tables through
+# them. Deploy a workload first and its shortcuts resolve to nothing.
+#
+# seedMetadata is false because the seeder cannot seed itself — nb_seed_metadata is being
+# deployed by this very run. The first real seed happens on the next workload deploy.
+#
+# This pipeline checks out platform-core twice: once as the calling repo (for platform/) and
+# once as the template source. That is not a mistake — the template is written to expect two
+# checkouts and the alias is what `- checkout: platform-core` resolves against.
+
+trigger: none
+pr: none
+
+resources:
+  repositories:
+    - repository: platform-core
+      type: git
+      name: <YOUR-ADO-PROJECT>/ms-fabric-platform-core
+      ref: refs/heads/main
+
+jobs:
+  - template: pipelines/templates/deploy-fabric-item.yml@platform-core
+    parameters:
+      jobName: deploy_platform
+      jobDisplayName: "Deploy platform metadata items"
+      variableGroups: [fabric-cicd-common]
+      workspaceId: $(FABRIC_PLATFORM_WORKSPACE_ID)
+      environmentName: TEST
+      repositoryDirectory: platform
+      itemsInScope: "Lakehouse,Notebook"
+      seedMetadata: false

@@ -73,6 +73,19 @@ parameters:
     default: []
     displayName: "Variable groups to link, e.g. [fabric-cicd-common, fabric-ingestion]."
 
+  - name: platformWorkspaceId
+    type: string
+    default: ""
+    displayName: >
+      Platform workspace holding lh_platform_metadata and nb_seed_metadata, e.g.
+      $(FABRIC_PLATFORM_WORKSPACE_ID). When set, the metadata table is re-seeded after a
+      successful deploy. Empty skips seeding, leaving the table on the PREVIOUS run's GUIDs.
+
+  - name: seedMetadata
+    type: boolean
+    default: true
+    displayName: "Re-seed the metadata table after deploying. On by default."
+
   - name: vmImage
     type: string
     default: ubuntu-latest
@@ -163,3 +176,35 @@ jobs:
           AZURE_TENANT_ID: $(AZURE_TENANT_ID)
           ${{ each kv in parameters.parameterEnvVars }}:
             ${{ format('FABRIC_PARAM_{0}', kv.key) }}: ${{ kv.value }}
+
+      # --allow-unresolved because a per-repo seed necessarily sees a partly-deployed estate:
+      # seeding after ingestion, silver's lakehouse does not exist yet. Unresolved names are
+      # printed, not swallowed. Once every repo has deployed, a strict seed should come back
+      # clean — anything still unresolved then is a real failure.
+      #
+      # The condition is on the RUNTIME value of platformWorkspaceId, so it is written with
+      # $[ ] rather than ${{ }}: the parameter usually arrives as $(FABRIC_PLATFORM_WORKSPACE_ID),
+      # which at template-expansion time is the literal string, never empty.
+      - ${{ if parameters.seedMetadata }}:
+          - bash: |
+              set -euo pipefail
+              # Shape check, not a literal comparison. ADO leaves $(FOO) as the literal seven
+              # characters when FOO is undefined, and it expands it in this script body too — so
+              # comparing against the literal would wrongly skip seeding whenever the variable IS
+              # set. Asking "is this a GUID" is true only when a real value arrived.
+              if ! printf '%s' "${PLATFORM_WORKSPACE_ID}" | grep -Eqi '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'; then
+                echo "##vso[task.logissue type=warning]Metadata table NOT re-seeded — platform workspace ID is not a GUID."
+                echo "##vso[task.logissue type=warning]It still holds the previous run's GUIDs. Add"
+                echo "##vso[task.logissue type=warning]FABRIC_PLATFORM_WORKSPACE_ID to the fabric-cicd-common group."
+                exit 0
+              fi
+              python "$(Build.SourcesDirectory)/platform-core/scripts/run_seed_metadata.py" \
+                --workspace-id "${PLATFORM_WORKSPACE_ID}" \
+                --environment "${{ parameters.environmentName }}" \
+                --allow-unresolved
+            displayName: "Seed the metadata table"
+            env:
+              PLATFORM_WORKSPACE_ID: ${{ parameters.platformWorkspaceId }}
+              AZURE_CLIENT_ID: $(AZURE_CLIENT_ID)
+              AZURE_CLIENT_SECRET: $(AZURE_CLIENT_SECRET)
+              AZURE_TENANT_ID: $(AZURE_TENANT_ID)

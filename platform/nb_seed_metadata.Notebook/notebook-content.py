@@ -34,6 +34,14 @@ environment = "TEST"
 # workspace access could edit, after which git no longer describes the environment.
 environment_map_b64 = ""
 
+# "true" seeds whatever resolves and reports the rest instead of refusing to write.
+#
+# A seed that runs as a tail step of EACH repo's deploy necessarily sees a half-built
+# environment: seeding after ingestion, silver's lakehouse does not exist yet. Strict mode is
+# still the default and is what a full-estate seed should use — see the block that consumes
+# this for why a partial seed is otherwise a bad idea.
+allow_unresolved = "false"
+
 # METADATA ********************
 
 # META {
@@ -284,13 +292,26 @@ print(f"[info] passthrough {len(connection_rows)} connections, {len(config_rows)
 # some references and fail at run time on the rest, which is the silent-failure class this
 # whole framework exists to remove.
 if unresolved:
-    raise RuntimeError(
-        f"{len(unresolved)} entries in the environment map did not resolve:\n  "
-        + "\n  ".join(unresolved)
-        + "\n\nDisplay names are matched literally and case-sensitively. A workspace recreated "
-          "under a different name, or a workload not yet deployed, are the usual causes. "
-          "Nothing has been written."
-    )
+    detail = "\n  ".join(unresolved)
+    if str(allow_unresolved).lower() == "true":
+        # Deliberately a warning, not a silent skip: the rows that did resolve are still worth
+        # writing, because the alternative during a phased rollout is a table that is stale
+        # rather than merely incomplete. Every unresolved name is named here.
+        print(
+            f"[warn] {len(unresolved)} entries did not resolve and are NOT being written:\n  "
+            f"{detail}\n"
+            f"[warn] Expected while the estate is only partly deployed. Anything still listed "
+            f"after every repo has deployed is a real failure — re-run the seed strictly."
+        )
+    else:
+        raise RuntimeError(
+            f"{len(unresolved)} entries in the environment map did not resolve:\n  "
+            + detail
+            + "\n\nDisplay names are matched literally and case-sensitively. A workspace "
+              "recreated under a different name, or a workload not yet deployed, are the usual "
+              "causes. Nothing has been written. Pass allow_unresolved=true if this is a "
+              "per-repo seed against a partly-deployed environment."
+        )
 
 # METADATA ********************
 

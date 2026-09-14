@@ -28,6 +28,20 @@ one repo's `parameter.yml`.
 | `TEST_BRONZE_WS_NAME` | no | `<YOUR-TEST-BRONZE-WS-NAME>` | Bronze workspace display name |
 | `TEST_SILVER_WS_NAME` | no | `<YOUR-TEST-SILVER-WS-NAME>` | Silver workspace display name |
 | `TEST_GOLD_WS_NAME` | no | `<YOUR-TEST-GOLD-WS-NAME>` | Gold workspace display name |
+| `FABRIC_PLATFORM_WORKSPACE_ID` | no | `96dd6579-15c0-488f-8fc8-9849cd702db3` | Platform workspace holding `lh_platform_metadata` and `nb_seed_metadata` |
+
+### About `FABRIC_PLATFORM_WORKSPACE_ID`
+
+The metadata framework's home. Every deploy re-seeds the `md_*` tables as a tail step, and this
+is the workspace that holds them. **Unset it and seeding is skipped with a warning rather than
+failing** — the deploy still succeeds, but the table keeps the previous run's GUIDs, which may
+point at items that have since been deleted and recreated.
+
+The same variable is a repo Variable on the GitHub side. `Test platform` already exists and was
+listed as unused precisely because platform-core had no Fabric items; it now does.
+
+There is **no Dev platform workspace**. Until one exists, Dev cannot be seeded, and
+`metadata/environments/dev.yml` serves only as the find-side of deploy-time substitution.
 
 ### About the four `*_WS_NAME` variables
 
@@ -39,6 +53,11 @@ rename is a one-line diff plus a known list of files to update (see
 [ado-parameter-templating.md](ado-parameter-templating.md) for that list).
 
 The names are matched **literally and case-sensitively** by the Fabric API.
+
+> **These are now consumed, not just documented.** `metadata/environments/test.yml` holds the
+> same display names, and `scripts/resolve_bindings.py` resolves them against the live API on
+> every deploy. The rename fan-out is real but it is now one file plus this group, rather than
+> five `parameter.yml` files.
 
 > **Wiring them in automatically is possible but unverified.** You could reference them as
 > `$workspace.$ENV:TEST_LANDING_WS_NAME.$id` and pass them through `parameterEnvVars`, which

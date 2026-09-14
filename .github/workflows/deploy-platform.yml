@@ -1,0 +1,24 @@
+name: Deploy platform items to Fabric Test
+
+# ms-fabric-platform-core is now an item repo as well as a tooling repo: platform/ holds
+# lh_platform_metadata (the md_* tables) and nb_seed_metadata (the seeder).
+#
+# THIS MUST DEPLOY BEFORE ANY WORKLOAD REPO. Every workload lakehouse carries OneLake shortcuts
+# pointing at lh_platform_metadata, and every workload notebook reads the md_* tables through
+# them. Deploy a workload first and its shortcuts resolve to nothing.
+#
+# seed-metadata is false here because the seeder cannot seed itself: nb_seed_metadata is being
+# deployed by this very run. The first real seed happens on the next workload deploy.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  deploy-platform:
+    uses: vtiyer89/ms-fabric-platform-core/.github/workflows/deploy-fabric-item.yml@main
+    with:
+      workspace-id: ${{ vars.FABRIC_PLATFORM_WORKSPACE_ID }}
+      environment-name: TEST
+      repository-directory: platform
+      items-in-scope: "Lakehouse,Notebook"
+      seed-metadata: false
+    secrets: inherit
