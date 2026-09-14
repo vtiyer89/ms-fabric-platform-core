@@ -151,9 +151,18 @@ def build_substitution_map(dev_map, target_map, session):
     dev_ws, dev_items, excluded = dev_guids(dev_map)
     target_ws, target_items, unresolved = resolve_targets(session, target_map, dev_ws, dev_items)
 
+    # Connections that this run cannot resolve are SKIPPED, not fatal.
+    #
+    # A deploy only ever carries its own repo's connection variables — ingestion's job passes the
+    # copy-job connection and nothing else — so requiring all four would fail every deploy. It is
+    # safe to skip because report_unknown_guids is the backstop and is stricter: if a skipped
+    # connection's Dev GUID actually appears in THIS directory, it survives substitution and is
+    # reported as unaccounted for, which fails the run. A connection belonging to another repo
+    # simply is not in these files, so skipping it changes nothing.
     dev_connections, dev_missing = connection_values(dev_map, "DEV")
     target_connections, target_missing = connection_values(target_map, "target")
-    unresolved += dev_missing + target_missing
+    for message in dev_missing + target_missing:
+        print(f"[info] {message} — skipped. Fatal only if its GUID is in this directory.")
 
     substitutions = {}
     for name, dev_guid in dev_ws.items():
@@ -165,8 +174,6 @@ def build_substitution_map(dev_map, target_map, session):
     for name, dev_guid in dev_connections.items():
         if name in target_connections:
             substitutions[dev_guid] = (target_connections[name], f"connection {name}")
-        else:
-            unresolved.append(f"connection {name!r}: present in DEV but not in the target map")
 
     return substitutions, excluded, unresolved, target_ws
 

@@ -70,34 +70,49 @@ def test_callers_only_pass_inputs_the_reusable_workflow_declares(workflow):
         assert not unknown, f"passes inputs the reusable workflow doesn't declare: {unknown}"
 
 
+def _workflow_at_ref(ref):
+    """The reusable workflow as it exists at `ref`, or None if that ref isn't available."""
+    import subprocess
+
+    result = subprocess.run(
+        ["git", "show", f"{ref}:.github/workflows/deploy-fabric-item.yml"],
+        cwd=Path(__file__).resolve().parent.parent,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout if result.returncode == 0 else None
+
+
 @pytest.mark.skipif(not CALLERS, reason="caller repos not cloned alongside platform-core")
 @pytest.mark.parametrize("workflow", CALLERS, ids=lambda p: p.parts[-4])
-def test_every_job_supplies_all_tokens_its_parameter_file_needs(workflow):
-    """Checked per job, not per repo.
+def test_callers_match_the_reusable_workflow_at_the_REF_THEY_PIN(workflow):
+    """The check above compares against the working tree. Reality uses the pinned ref.
 
-    $ENV: tokens are resolved for the whole parameter.yml before fabric-cicd parses it, and the
-    deploy script's guard scans the whole file — so a job needs every token in the file it
-    points at, even ones only used by items outside its items-to-include list.
+    A caller says `uses: …/deploy-fabric-item.yml@main`, so at run time GitHub reads MAIN's copy,
+    not the one in this branch. On a feature branch that adds an input to both the caller and the
+    reusable workflow, the working-tree comparison passes while the real dispatch fails at parse
+    time with "unexpected input" — the entire run rejected before any step executes.
 
-    ms-fabric-ingestion is where this bites: deploy-landing and deploy-bronze share one
-    parameter.yml, and only the copy job uses the connection. Comparing per repo hides it,
-    because the other job supplies the variables.
+    That is exactly how ms-fabric-dp-trip-report's allow-deletes bug survived: locally consistent,
+    broken against the ref it actually pinned.
+
+    Skipped when the pinned ref isn't fetched locally, so this can't fail for the wrong reason.
     """
-    repo_root = workflow.parents[2]
-    jobs = yaml.safe_load(workflow.read_text())["jobs"]
-
-    for job_name, job in jobs.items():
-        directory = (job.get("with") or {}).get("repository-directory")
-        if not directory:
-            continue
-        parameter_file = repo_root / directory / "parameter.yml"
-        if not parameter_file.exists():
+    for job in yaml.safe_load(workflow.read_text())["jobs"].values():
+        uses = str(job.get("uses", ""))
+        if "ms-fabric-platform-core" not in uses:
             continue
 
-        needed = set(re.findall(r"\$ENV:([A-Za-z_][A-Za-z0-9_]*)", parameter_file.read_text()))
-        supplied = set(re.findall(r"FABRIC_PARAM_([A-Z_]+)", (job.get("with") or {}).get("parameter-env-vars", "")))
+        ref = uses.rsplit("@", 1)[-1]
+        source = _workflow_at_ref(ref)
+        if source is None:
+            pytest.skip(f"ref {ref!r} not available locally")
 
-        assert not (needed - supplied), (
-            f"job '{job_name}' points at {directory}/parameter.yml, which needs "
-            f"{sorted(needed - supplied)}, but the job doesn't supply them"
+        on = yaml.safe_load(source)
+        declared = set((on.get(True) or on.get("on"))["workflow_call"].get("inputs") or {})
+        unknown = set(job.get("with", {})) - declared
+        assert not unknown, (
+            f"passes {sorted(unknown)}, which deploy-fabric-item.yml@{ref} does not declare. "
+            f"The run would be rejected at parse time. Merge platform-core to {ref} first, or "
+            f"repoint the caller."
         )

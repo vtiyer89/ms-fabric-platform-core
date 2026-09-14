@@ -270,3 +270,33 @@ def test_surviving_placeholder_fails_the_deploy(item_dir):
 def test_substituted_placeholder_passes(item_dir):
     root = item_dir(f'{{"workspaceId": "{TARGET_WS}"}}')
     rb.assert_no_placeholder_guids(root, {SENTINEL: "platform"})
+
+
+# --- partial connection sets ---------------------------------------------------------------
+
+
+def test_missing_connection_is_skipped_not_fatal(monkeypatch, capsys):
+    """A deploy only carries its own repo's connection variables.
+
+    ingestion's job passes the copy-job connection and nothing else, so treating a missing
+    connection as fatal would fail every deploy. Safe only because report_unknown_guids is the
+    backstop — see the test below, which is the other half of this pair.
+    """
+    monkeypatch.delenv("DEV_SILVER_CONNECTION_ID", raising=False)
+    monkeypatch.delenv("FABRIC_PARAM_DEV_SILVER_CONNECTION_ID", raising=False)
+    values, missing = rb.connection_values(
+        {"connections": {"silver_notebook": {"from_env": "DEV_SILVER_CONNECTION_ID"}}}, "DEV"
+    )
+    assert values == {} and len(missing) == 1
+
+
+def test_a_skipped_connection_that_mattered_is_caught_by_the_backstop(item_dir):
+    """The other half: skipping is only safe because an unsubstituted GUID still fails.
+
+    If a connection was skipped but its Dev GUID is actually in this directory, it survives
+    substitution and report_unknown_guids fails the run. A connection belonging to another repo
+    simply isn't in these files, so skipping it changes nothing.
+    """
+    dev_connection = "bdfd8e6a-abb7-41ba-9d3b-4b5707901b54"
+    root = item_dir(f'{{"externalReferences": {{"connection": "{dev_connection}"}}}}')
+    assert dev_connection in rb.report_unknown_guids(root, substitutions={}, excluded={})
