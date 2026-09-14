@@ -162,3 +162,35 @@ def test_no_parameter_yml_survives():
     """The whole point. A stray parameter.yml would be silently ignored by the new deploy path."""
     strays = [str(p.relative_to(REPO_ROOT)) for root in _present() for p in root.rglob("parameter*.yml")]
     assert not strays, f"parameter.yml files still present: {strays}"
+
+
+def test_notebooks_have_no_cross_workspace_deploy_time_bindings(dev_map):
+    """Silver and gold must depend only on themselves and on the platform workspace.
+
+    This is the headline property of the whole change: their upstream references resolve at RUN
+    time from md_item, so gold can deploy before silver and silver before bronze. If a
+    cross-workspace GUID reappears in either directory, deploy ordering is silently back and the
+    only symptom is a failure much later, when someone finally deploys them out of order.
+    """
+    workspaces, items, _excluded = rb.dev_guids(dev_map)
+    placeholders = rb.placeholder_guids(dev_map)
+
+    allowed = {
+        "silver": {"silver", "lh_silver"},
+        "gold": {"gold", "lh_gold"},
+    }
+
+    for layer, own in allowed.items():
+        root = REPO_ROOT / "ms-fabric-dd-trip-data" / layer
+        text = "\n".join(
+            p.read_text(encoding="utf-8", errors="ignore") for p in rb.candidate_files(root)
+        )
+        found = {
+            name
+            for name, guid in {**workspaces, **items}.items()
+            if guid in text and guid not in placeholders
+        }
+        assert found == own, (
+            f"{layer} should bind only {sorted(own)} at deploy time (plus the platform "
+            f"placeholders), but binds {sorted(found)}"
+        )

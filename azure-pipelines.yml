@@ -6,8 +6,13 @@
 # pointing at lh_platform_metadata, and every workload notebook reads the md_* tables through
 # them. Deploy a workload first and its shortcuts resolve to nothing.
 #
-# seedMetadata is false because the seeder cannot seed itself — nb_seed_metadata is being
-# deployed by this very run. The first real seed happens on the next workload deploy.
+# This DOES seed, and the seed matters more here than anywhere else: it is what CREATES the md_*
+# Delta tables. Every workload lakehouse carries OneLake shortcuts pointing at those tables, so
+# without this run they would be created pointing at paths that do not exist yet.
+#
+# The seed resolves only what exists at this point — the six workspaces, lh_platform_metadata,
+# the connections and the config. The other twelve items are not deployed yet, which is exactly
+# what --allow-unresolved is for; each later deploy re-seeds and fills in its own items.
 #
 # This pipeline checks out platform-core twice: once as the calling repo (for platform/) and
 # once as the template source. That is not a mistake — the template is written to expect two
@@ -31,6 +36,6 @@ jobs:
       variableGroups: [fabric-cicd-common]
       workspaceId: $(FABRIC_PLATFORM_WORKSPACE_ID)
       environmentName: TEST
+      platformWorkspaceId: $(FABRIC_PLATFORM_WORKSPACE_ID)
       repositoryDirectory: platform
       itemsInScope: "Lakehouse,Notebook"
-      seedMetadata: false
