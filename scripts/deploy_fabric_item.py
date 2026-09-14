@@ -21,6 +21,7 @@ from pathlib import Path
 
 import yaml
 from azure.identity import ClientSecretCredential
+import resolve_bindings
 from fabric_cicd import (
     FabricWorkspace,
     append_feature_flag,
@@ -187,12 +188,21 @@ def main():
     assert_workspace_id_supplied(args.workspace_id)
     items_to_include = [i.strip() for i in args.items_to_include.split(",") if i.strip()] or None
 
-    append_feature_flag("enable_environment_variable_replacement")
     if items_to_include:
         enable_selective_publish_flags()
-    provided = inject_parameter_env_vars()
-    assert_all_tokens_resolvable(args.repository_directory, provided)
-    assert_find_values_present(args.repository_directory)
+
+    # Lakehouse shortcuts carry the md_* metadata tables into each workload lakehouse, and
+    # fabric-cicd only opens shortcuts.metadata.json when this flag is set (_items/_lakehouse.py,
+    # post_publish_all). Without it there is no shortcut, no log line and a green deploy — the
+    # workload then runs against a metadata table it cannot see. Unlike enable_items_to_include
+    # this does NOT require enable_experimental_features.
+    append_feature_flag("enable_shortcut_publish")
+
+    # Substitution happens HERE, before publish, and writes the item files in place on the
+    # runner. This is what parameter.yml used to do; see scripts/resolve_bindings.py for why it
+    # needs no per-rule configuration. It exits non-zero on an unresolved binding or an
+    # unaccounted-for GUID, so nothing unparameterised reaches the API.
+    resolve_bindings.resolve(args.repository_directory, args.environment)
 
     token_credential = ClientSecretCredential(
         client_id=os.environ["AZURE_CLIENT_ID"],

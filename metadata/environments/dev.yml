@@ -26,6 +26,19 @@ workspaces:
     gold:
         workspace_id: "2b8cb241-d4ae-4c26-affc-6f89941b18af"
 
+    # Dev keeps the landing and bronze PIPELINES together in one workspace, while their
+    # lakehouses live in the two workspaces above. Test splits the pipelines apart. This GUID is
+    # therefore the one value that must become two different values, which a whole-GUID swap
+    # cannot express — it is handled by jsonpath_overrides in the target environment's map.
+    #
+    # global_substitution: false keeps it OUT of the {dev_guid -> target_guid} map. Leaving it in
+    # would rewrite master_landing and master_bronze identically and silently collapse the split.
+    # It is declared rather than omitted so that the unknown-GUID report does not flag it, and so
+    # the reason is recorded where the value is.
+    pipelines:
+        workspace_id: "4b97f6ae-61d4-4547-98dc-81ed6a137c28"
+        global_substitution: false
+
     # NOT HARVESTABLE. pl_orch_trips is the only item in the orchestration workspace and nothing
     # references that workspace by ID, so no rule ever carried its Dev GUID. Nothing needs it for
     # substitution. Add it as workspace_id if a Dev seed is ever run.
