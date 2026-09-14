@@ -21,12 +21,14 @@ deleted and recreated — with nothing anywhere saying so.
 
 import argparse
 import base64
+import hashlib
 import os
 import pathlib
 import sys
 import time
 
 import requests
+import yaml
 from azure.identity import ClientSecretCredential
 
 FABRIC_API = "https://api.fabric.microsoft.com/v1"
@@ -37,6 +39,33 @@ ENV_MAP_DIRECTORY = pathlib.Path(__file__).resolve().parent.parent / "metadata" 
 # Deduped means an identical run was already in flight; treat it as terminal rather than
 # polling forever on a job this invocation does not own.
 TERMINAL_STATES = {"Completed", "Failed", "Cancelled", "Deduped"}
+
+
+def run_provenance():
+    """Who/what/which-code produced this seed, from whichever CI is running.
+
+    Without this the table records only that "ci" wrote a row at a timestamp, which cannot answer
+    the question that actually matters after a bad deploy: which commit and which run put this
+    GUID here. It is also the gap noted in the plan's risk table — reverting code does not revert
+    the table, so the table has to say what code it came from.
+    """
+    github = os.environ.get("GITHUB_RUN_ID")
+    ado = os.environ.get("BUILD_BUILDID")
+    if github:
+        return {
+            "ci": "github-actions",
+            "run_id": github,
+            "git_commit": os.environ.get("GITHUB_SHA", ""),
+            "source_ref": os.environ.get("GITHUB_REF_NAME", ""),
+        }
+    if ado:
+        return {
+            "ci": "azure-devops",
+            "run_id": ado,
+            "git_commit": os.environ.get("BUILD_SOURCEVERSION", ""),
+            "source_ref": os.environ.get("BUILD_SOURCEBRANCHNAME", ""),
+        }
+    return {"ci": "local", "run_id": "", "git_commit": "", "source_ref": ""}
 
 
 def session_for_service_principal():
@@ -59,15 +88,52 @@ def session_for_service_principal():
     return session
 
 
+def resolve_from_env(env_map):
+    """Turn every connection's `from_env` into a literal before the map leaves this machine.
+
+    The seeder runs inside Fabric, where the CI runner's environment does not exist — so a
+    `from_env` reference is unresolvable by the time the notebook sees it. Resolving here keeps
+    connection GUIDs out of git while still handing the notebook a fully-resolved map.
+
+    Both spellings are accepted, matching resolve_bindings: the bare name and the
+    FABRIC_PARAM_<NAME> form CI already sets for the old $ENV: tokens.
+    """
+    missing = []
+    for name, spec in (env_map.get("connections") or {}).items():
+        if "connection_id" in spec:
+            continue
+        variable = spec.get("from_env")
+        if not variable:
+            missing.append(f"connection {name!r}: neither connection_id nor from_env")
+            continue
+        value = (os.environ.get(variable) or os.environ.get(f"FABRIC_PARAM_{variable}") or "").strip()
+        if not value:
+            missing.append(f"connection {name!r}: neither {variable} nor FABRIC_PARAM_{variable} is set")
+            continue
+        spec.pop("from_env")
+        spec["connection_id"] = value
+
+    if missing:
+        sys.exit(
+            f"[error] {len(missing)} connection(s) could not be resolved:\n  "
+            + "\n  ".join(missing)
+            + "\n\n[error] These are the one class with no live resolution. Nothing has been "
+              "seeded."
+        )
+    return env_map
+
+
 def read_environment_map_b64(environment):
-    """The whole <env>.yml, base64-encoded, to travel as one notebook parameter."""
+    """The whole <env>.yml, connections resolved, base64-encoded as one notebook parameter."""
     path = ENV_MAP_DIRECTORY / f"{environment.lower()}.yml"
     if not path.exists():
         sys.exit(
             f"[error] no environment map at {path}.\n"
             f"[error] Every environment needs one; it is the only file edited per environment."
         )
-    return base64.b64encode(path.read_bytes()).decode("ascii")
+    env_map = resolve_from_env(yaml.safe_load(path.read_text()))
+    rendered = yaml.safe_dump(env_map, sort_keys=False)
+    return base64.b64encode(rendered.encode("utf-8")).decode("ascii"), rendered
 
 
 def resolve_notebook_id(session, workspace_id):
@@ -95,7 +161,8 @@ def resolve_notebook_id(session, workspace_id):
     return match["id"]
 
 
-def start_run(session, workspace_id, notebook_id, environment, env_map_b64, allow_unresolved):
+def start_run(session, workspace_id, notebook_id, environment, env_map_b64, allow_unresolved,
+              provenance, map_checksum):
     """Start the notebook and return the run-instance URL from the Location header."""
     response = session.post(
         f"{FABRIC_API}/workspaces/{workspace_id}/items/{notebook_id}/jobs/instances",
@@ -106,6 +173,11 @@ def start_run(session, workspace_id, notebook_id, environment, env_map_b64, allo
                     "environment": {"value": environment, "type": "string"},
                     "environment_map_b64": {"value": env_map_b64, "type": "string"},
                     "allow_unresolved": {"value": str(allow_unresolved).lower(), "type": "string"},
+                    "seed_ci": {"value": provenance["ci"], "type": "string"},
+                    "seed_run_id": {"value": provenance["run_id"], "type": "string"},
+                    "seed_git_commit": {"value": provenance["git_commit"], "type": "string"},
+                    "seed_source_ref": {"value": provenance["source_ref"], "type": "string"},
+                    "seed_map_checksum": {"value": map_checksum, "type": "string"},
                 }
             }
         },
@@ -174,14 +246,22 @@ def main():
             "[error] --workspace-id to override it for a local run."
         )
 
-    env_map_b64 = read_environment_map_b64(args.environment)
+    env_map_b64, rendered_map = read_environment_map_b64(args.environment)
     session = session_for_service_principal()
 
     notebook_id = resolve_notebook_id(session, args.workspace_id)
     print(f"[info] seeding {args.environment} via {SEED_NOTEBOOK} ({notebook_id})")
 
+    provenance = run_provenance()
+    # Checksum of the RESOLVED map, so the row identifies the exact configuration that produced
+    # it — including which connection values were injected, which the git SHA alone cannot say.
+    map_checksum = hashlib.sha256(rendered_map.encode("utf-8")).hexdigest()[:16]
+    print(f"[info] {provenance['ci']} run={provenance['run_id'] or '-'} "
+          f"commit={provenance['git_commit'][:8] or '-'} map={map_checksum}")
+
     run_url = start_run(
-        session, args.workspace_id, notebook_id, args.environment, env_map_b64, args.allow_unresolved
+        session, args.workspace_id, notebook_id, args.environment, env_map_b64,
+        args.allow_unresolved, provenance, map_checksum,
     )
     result = wait_for(session, run_url, args.timeout_seconds, args.poll_seconds)
 

@@ -42,6 +42,15 @@ environment_map_b64 = ""
 # this for why a partial seed is otherwise a bad idea.
 allow_unresolved = "false"
 
+# Provenance, supplied by scripts/run_seed_metadata.py from whichever CI is running. Recorded in
+# md_seed_run so the table can answer which commit and which run put a given GUID here — the
+# question that matters after a bad deploy, and one "updated_by = ci" cannot answer.
+seed_ci = "local"
+seed_run_id = ""
+seed_git_commit = ""
+seed_source_ref = ""
+seed_map_checksum = ""
+
 # METADATA ********************
 
 # META {
@@ -416,6 +425,52 @@ def seed(table_name, schema, rows, key_column):
 
 for _name, (_schema, _rows, _key) in TABLES.items():
     seed(_name, _schema, _rows, _key)
+
+# --- md_seed_run: the log of seeds, appended not merged ------------------------------------
+#
+# Deliberately NOT merged and NOT owner-gated, unlike the four tables above. Those describe what
+# the environment currently IS, so a row is replaced. This describes what HAPPENED, so every run
+# adds a row and nothing is ever overwritten — a seed history you can read backwards after a bad
+# deploy.
+#
+# unresolved_count is the column to watch. A partial seed is expected while the estate is only
+# partly deployed; a non-zero count after every repo has deployed means something is genuinely
+# missing, and this is where that shows up without re-reading CI logs.
+_seed_run_schema = StructType([
+    StructField("seeded_at", TimestampType(), False),
+    StructField("environment", StringType(), False),
+    StructField("ci", StringType(), False),
+    StructField("run_id", StringType(), True),
+    StructField("git_commit", StringType(), True),
+    StructField("source_ref", StringType(), True),
+    StructField("map_checksum", StringType(), True),
+    StructField("workspaces_resolved", StringType(), False),
+    StructField("items_resolved", StringType(), False),
+    StructField("connections_written", StringType(), False),
+    StructField("config_written", StringType(), False),
+    StructField("unresolved_count", StringType(), False),
+    StructField("unresolved", StringType(), True),
+])
+
+_seed_run_row = [(
+    SEEDED_AT, environment, seed_ci, seed_run_id, seed_git_commit, seed_source_ref,
+    seed_map_checksum,
+    str(len(workspace_rows)), str(len(item_rows)), str(len(connection_rows)), str(len(config_rows)),
+    str(len(unresolved)), "; ".join(unresolved) if unresolved else None,
+)]
+
+_seed_run_path = f"{LAKEHOUSE_ROOT}/Tables/dbo/md_seed_run"
+(
+    spark.createDataFrame(_seed_run_row, _seed_run_schema)
+    .write.format("delta")
+    .mode("append")
+    .save(_seed_run_path)
+)
+print(
+    f"[info] md_seed_run: recorded {seed_ci} run {seed_run_id or '-'} "
+    f"commit {(seed_git_commit or '-')[:8]} map {seed_map_checksum or '-'} "
+    f"({len(unresolved)} unresolved)"
+)
 
 # METADATA ********************
 

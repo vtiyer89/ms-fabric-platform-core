@@ -34,6 +34,13 @@ items:
         workspace: platform
         type: Lakehouse
         display_name: "lh_platform_metadata"
+    # The seeder itself. Nothing references it by GUID, so it needs no DEV entry — it is here so
+    # md_item is a complete inventory of the platform workspace rather than a partial one, and so
+    # run_seed_metadata's "resolve by display name" has a recorded counterpart.
+    nb_seed_metadata:
+        workspace: platform
+        type: Notebook
+        display_name: "nb_seed_metadata"
 
     lh_landing:
         workspace: landing

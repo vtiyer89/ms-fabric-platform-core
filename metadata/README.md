@@ -46,6 +46,33 @@ as a schema change.
 | `md_item` | seeder (CI) | `logical_name` + `environment` |
 | `md_connection` | seeder, passthrough from the env map | `logical_name` + `environment` |
 | `md_config` | seeder, passthrough from the env map | `config_key` + `environment` |
+| `md_seed_run` | seeder, **appended every run** | none — it is a log, not a state table |
+
+### `md_seed_run` — what happened, not what is
+
+The four tables above describe what the environment **is**, so the seeder merges and a row is
+replaced. `md_seed_run` describes what **happened**, so every run appends and nothing is ever
+overwritten. It records the CI system, run id, git commit, source ref, a checksum of the resolved
+environment map, the counts written, and any names that did not resolve.
+
+It exists because `updated_by = 'ci'` cannot answer the question that matters after a bad deploy:
+*which commit and which run put this GUID here.* It is also the answer to the plan's standing
+risk that reverting code does not revert the table — the table now says what code it came from.
+
+The **checksum is of the resolved map**, after `from_env` connections have been substituted, so
+it identifies the exact configuration used including injected connection values, which the git
+SHA alone cannot.
+
+`unresolved_count` is the column to watch. A partial seed is expected while the estate is only
+partly deployed; a non-zero count after every repo has deployed means something is genuinely
+missing, and this surfaces it without re-reading CI logs.
+
+```sql
+SELECT seeded_at, run_id, LEFT(git_commit, 8) AS commit, items_resolved, unresolved_count
+FROM   lh_platform_metadata.dbo.md_seed_run
+WHERE  environment = 'TEST'
+ORDER  BY seeded_at DESC
+```
 
 `md_run_state` (watermarks, run history) is deliberately **not** here. It is high-write and must
 not share a table with config that is read on every pipeline start.
