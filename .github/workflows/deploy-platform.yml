@@ -36,4 +36,17 @@ jobs:
       platform-workspace-id: ${{ vars.FABRIC_PLATFORM_WORKSPACE_ID }}
       repository-directory: platform
       items-in-scope: "Lakehouse,Notebook"
+      # platform/ itself references no connections, so none of these are needed to DEPLOY it.
+      # They are here for the SEED step that runs after: the seeder writes the whole
+      # md_connection table for the environment, and platform-core is the only repo that can
+      # supply all four — each item repo carries only its own, which is why their per-deploy
+      # seeds write md_connection partially and warn about the rest.
+      #
+      # The reusable workflow exports these to $GITHUB_ENV, so the seed step picks them up.
+      # Pass Variables, never Secrets: these values appear in workflow logs.
+      parameter-env-vars: |
+        FABRIC_PARAM_TEST_COPY_JOB_CONNECTION_ID=${{ vars.TEST_COPY_JOB_CONNECTION_ID }}
+        FABRIC_PARAM_TEST_SILVER_CONNECTION_ID=${{ vars.TEST_SILVER_CONNECTION_ID }}
+        FABRIC_PARAM_TEST_GOLD_CONNECTION_ID=${{ vars.TEST_GOLD_CONNECTION_ID }}
+        FABRIC_PARAM_TEST_PIPELINE_INVOKE_CONNECTION_ID=${{ vars.TEST_PIPELINE_INVOKE_CONNECTION_ID }}
     secrets: inherit
