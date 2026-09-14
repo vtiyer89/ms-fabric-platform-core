@@ -1,0 +1,141 @@
+# Environment map for TEST — the seeder's only input.
+#
+# This file lists LOGICAL NAMES and the Fabric DISPLAY NAMES they map to in this environment.
+# It deliberately contains no workspace or item GUIDs: nb_seed_metadata resolves every display
+# name to a GUID through the Fabric REST API at seed time and writes the result to md_workspace
+# / md_item. That keeps the "generated, not authored" property that parameter.yml has today —
+# recreate a workspace under the same display name and the next seed run self-heals.
+#
+# Logical names are the contract. Workload code references them (e.g. get_item("lh_bronze"));
+# they must stay stable across environments and should never change casually.
+#
+# Display names are matched literally and case-sensitively, exactly as fabric-cicd matches them.
+
+environment: TEST
+
+workspaces:
+    platform:
+        display_name: "Test platform"
+    landing:
+        display_name: "ws-test-landing-rjoose-v2"
+    bronze:
+        display_name: "ws-test-bronze-rjoose-v2"
+    silver:
+        display_name: "ws-test-dd-sustainability-silver-v2"
+    gold:
+        display_name: "ws-test-dd-sustainability-gold-v2"
+    orchestration:
+        display_name: "ws-test-orchestration-v2"
+
+# Every item any workload needs to reference by GUID at run time.
+# `workspace` is a logical name from the block above, not a display name.
+items:
+    lh_platform_metadata:
+        workspace: platform
+        type: Lakehouse
+        display_name: "lh_platform_metadata"
+
+    lh_landing:
+        workspace: landing
+        type: Lakehouse
+        display_name: "lh_landing_nyc_taxi"
+    pl_landing_ingest:
+        workspace: landing
+        type: DataPipeline
+        display_name: "pl_landing_nyc_ingest"
+
+    lh_bronze:
+        workspace: bronze
+        type: Lakehouse
+        display_name: "lh_bronze_nyc_taxi"
+    pl_bronze:
+        workspace: bronze
+        type: DataPipeline
+        display_name: "pl_bronze_nyc_taxi"
+    cj_landing_bronze:
+        workspace: bronze
+        type: CopyJob
+        display_name: "landing_bronze_copy_job"
+
+    lh_silver:
+        workspace: silver
+        type: Lakehouse
+        display_name: "lh_silver_dd_trip_records"
+    nb_silver_transform:
+        workspace: silver
+        type: Notebook
+        display_name: "nb_silver_yellow_cab_transform"
+    pl_silver_invoke:
+        workspace: silver
+        type: DataPipeline
+        display_name: "invoke_silver_transform"
+
+    lh_gold:
+        workspace: gold
+        type: Lakehouse
+        display_name: "lh_gold_dd_trip_records"
+    nb_gold_aggregate:
+        workspace: gold
+        type: Notebook
+        display_name: "nb_gold_yellow_cab_aggregate"
+    pl_gold_invoke:
+        workspace: gold
+        type: DataPipeline
+        display_name: "invoke_gold_aggregate"
+
+    pl_orch_trips:
+        workspace: orchestration
+        type: DataPipeline
+        display_name: "pl_orch_trips"
+
+# Connections are tenant objects, not Fabric items. Whether they can be resolved by display name
+# through the connections REST API is spike S4 in docs/metadata-driven-deployment-plan.md — it is
+# NOT yet verified, so these stay the one hand-maintained class, exactly as they were in
+# parameter.yml.
+#
+# `from_env` names the CI variable that supplies the value, matching dev.yml. This keeps the
+# existing FABRIC_PARAM_<NAME> plumbing working unchanged, so no CI configuration changes in this
+# step. Replacing these with literal connection_id values is deliberately the last change made,
+# once the seeder is proven.
+connections:
+    copy_job:
+        from_env: TEST_COPY_JOB_CONNECTION_ID
+    silver_notebook:
+        from_env: TEST_SILVER_CONNECTION_ID
+    gold_notebook:
+        from_env: TEST_GOLD_CONNECTION_ID
+    pipeline_invoke:
+        from_env: TEST_PIPELINE_INVOKE_CONNECTION_ID
+
+# Business config — values the data team may want to change without a deploy.
+# See docs/runtime-vs-deploytime-config.md Part B; those decisions are still open, so this
+# starts with the one value that doc calls the strongest candidate (B1).
+config:
+    landing_source_file:
+        value: "yellow_tripdata_2026-01.parquet"
+    bronze_write_behavior:
+        value: "Overwrite"
+
+# Activity-scoped overrides — the one case a whole-GUID swap cannot express.
+#
+# pl_orch_trips' master_landing and master_bronze activities carry the SAME Dev workspace GUID,
+# because Dev keeps both pipelines in one workspace while Test splits them across two. A global
+# find/replace rewrites every occurrence of a value identically, so it cannot send one activity
+# to Landing and the other to Bronze.
+#
+# These are applied after the global pass, by jsonpath, and are the direct descendant of the two
+# key_value_replace rules in the old orchestration/parameter.yml. This is the only entry of its
+# kind in the project; needing a second one is a signal to re-examine the topology rather than to
+# add it here.
+jsonpath_overrides:
+    - description: "master_landing invokes the landing workspace"
+      item_type: DataPipeline
+      item_name: pl_orch_trips
+      path: "$.properties.activities[?(@.name=='master_landing')].typeProperties.workspaceId"
+      workspace: landing
+
+    - description: "master_bronze invokes the bronze workspace"
+      item_type: DataPipeline
+      item_name: pl_orch_trips
+      path: "$.properties.activities[?(@.name=='master_bronze')].typeProperties.workspaceId"
+      workspace: bronze

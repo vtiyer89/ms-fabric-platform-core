@@ -1,0 +1,109 @@
+# Environment map for DEV — harvested from the parameter.yml files this framework replaces.
+#
+# Dev is mapped by GUID, not by display name, and that is deliberate. Every value here came from
+# the DEV: keys of the five parameter.yml files, which only ever held GUIDs — no Dev display name
+# was ever recorded anywhere in these repos. `git show pre-metadata-v1` is where they came from.
+#
+# THIS FILE IS THE FIND-SIDE OF EVERY SUBSTITUTION. scripts/resolve_bindings.py reads it to learn
+# which Dev GUID each logical name currently carries in the item definitions, then rewrites each
+# one to the target environment's GUID. Deleting or mistyping an entry here does not fail the
+# deploy by itself — it silently stops substituting that reference — which is why
+# assert_every_dev_guid_matches exists.
+#
+# Consequence of mapping by GUID: Dev does NOT get the self-healing property Test has. Recreate a
+# Dev workspace and its GUID changes and this file must be updated by hand. Accepted, because Dev
+# is authored through Fabric's own git integration and is never a deploy target.
+
+environment: DEV
+
+workspaces:
+    landing:
+        workspace_id: "37f9f143-c972-45c2-9ae6-995b7639dff5"
+    bronze:
+        workspace_id: "3ab4eb52-fcd3-48e0-a92c-3e3feb437a79"
+    silver:
+        workspace_id: "307d28b4-50b2-43c0-ba34-4f8e0e5c53a0"
+    gold:
+        workspace_id: "2b8cb241-d4ae-4c26-affc-6f89941b18af"
+
+    # NOT HARVESTABLE. pl_orch_trips is the only item in the orchestration workspace and nothing
+    # references that workspace by ID, so no rule ever carried its Dev GUID. Nothing needs it for
+    # substitution. Add it as workspace_id if a Dev seed is ever run.
+    # orchestration:
+    #     workspace_id: "<YOUR-DEV-ORCHESTRATION-WORKSPACE-ID>"
+
+    # No Dev platform workspace is known to exist. See metadata/README.md.
+    # platform:
+    #     workspace_id: "<YOUR-DEV-PLATFORM-WORKSPACE-ID>"
+
+items:
+    # --- Referenced by other items, so harvested from a find_value -------------------------
+    lh_landing:
+        workspace: landing
+        type: Lakehouse
+        item_id: "95e9be52-6ce5-4912-9264-d8c101939c5f"
+    pl_landing_ingest:
+        workspace: landing
+        type: DataPipeline
+        item_id: "2ac2a8c2-0f95-45c4-82a5-99c5529a02e8"
+
+    lh_bronze:
+        workspace: bronze
+        type: Lakehouse
+        item_id: "0bd61d00-d794-4351-8791-faeb94879e25"
+    pl_bronze:
+        workspace: bronze
+        type: DataPipeline
+        item_id: "872cbb28-aa03-43ac-a1e2-fa850e686584"
+
+    lh_silver:
+        workspace: silver
+        type: Lakehouse
+        item_id: "e52acf23-60cb-480b-9256-9f75e3d424d2"
+    pl_silver_invoke:
+        workspace: silver
+        type: DataPipeline
+        item_id: "168edd10-fc25-467c-86df-a0e3d2dac76c"
+
+    lh_gold:
+        workspace: gold
+        type: Lakehouse
+        item_id: "864dfa25-bf9b-46ac-8082-e623b6fd5e11"
+    pl_gold_invoke:
+        workspace: gold
+        type: DataPipeline
+        item_id: "5679224f-ae48-440f-a5a9-7edca59b6b45"
+
+    # --- Referenced by nothing, so no Dev GUID was ever recorded ---------------------------
+    # These resolve by display name, which only works during an actual Dev seed (the identity
+    # must be able to list the Dev workspace). They are absent from the substitution map, which
+    # is correct: nothing points at them by GUID, so there is nothing to rewrite.
+    cj_landing_bronze:
+        workspace: bronze
+        type: CopyJob
+        display_name: "landing_bronze_copy_job"
+    nb_silver_transform:
+        workspace: silver
+        type: Notebook
+        display_name: "nb_silver_yellow_cab_transform"
+    nb_gold_aggregate:
+        workspace: gold
+        type: Notebook
+        display_name: "nb_gold_yellow_cab_aggregate"
+
+# Connections stay in CI variables for now rather than being written into git.
+#
+# `from_env` names the variable that supplies the value — the same FABRIC_PARAM_<NAME> plumbing
+# parameter.yml used via its $ENV: tokens, so no CI configuration changes in this step. Moving
+# these into the map as literals is deliberately the LAST thing to change, once the seeder is
+# proven; a connection GUID is the one class with no live resolution and therefore the one most
+# painful to get wrong.
+connections:
+    copy_job:
+        from_env: DEV_COPY_JOB_CONNECTION_ID
+    silver_notebook:
+        from_env: DEV_SILVER_CONNECTION_ID
+    gold_notebook:
+        from_env: DEV_GOLD_CONNECTION_ID
+    pipeline_invoke:
+        from_env: DEV_PIPELINE_INVOKE_CONNECTION_ID

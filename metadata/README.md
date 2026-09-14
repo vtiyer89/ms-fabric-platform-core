@@ -10,14 +10,25 @@ metadata/environments/<env>.yml     the ONLY hand-edited input per environment
 platform/                           the Fabric items that hold and populate the tables
 ```
 
-`<env>.yml` maps **logical names** to Fabric **display names**. It contains no workspace or item
-GUIDs by design: `nb_seed_metadata` resolves display names through the Fabric REST API at seed
-time. This preserves the property `parameter.yml` has today — a workspace recreated under the
-same display name self-heals on the next seed, with no file to edit.
+`<env>.yml` maps **logical names** to Fabric identity. A deploy-target environment maps by
+**display name**, which `nb_seed_metadata` resolves through the Fabric REST API at seed time.
+This preserves the property `parameter.yml` had — a workspace recreated under the same display
+name self-heals on the next seed, with no file to edit.
+
+**`dev.yml` is the exception and maps by GUID.** Dev display names were never recorded in these
+repos; every Dev value here was harvested from the `DEV:` keys of the `parameter.yml` files this
+framework replaces, and those only ever held GUIDs. Dev therefore does not self-heal — recreate a
+Dev workspace and the file needs a hand edit. That is accepted because Dev is authored through
+Fabric's own git integration and is never a deploy target.
+
+`dev.yml` has a second job that no other map has: it is the **find-side of every substitution**.
+`scripts/resolve_bindings.py` reads it to learn which Dev GUID each logical name currently carries
+in the item definitions, then rewrites each to the target environment's GUID.
 
 > If anyone is ever tempted to paste a GUID into `md_workspace` or `md_item` by hand, the
 > framework has failed. The tables are generated, not authored. Connections are the one
-> exception, and only until spike S4 settles.
+> exception, and only until spike S4 settles — they carry `from_env`, naming the CI variable that
+> supplies the value, which keeps the existing `FABRIC_PARAM_<NAME>` plumbing working unchanged.
 
 ## Logical names are the contract
 
@@ -56,19 +67,33 @@ it is. Reconcile them; do not let them become permanent.
 1. Create the workspaces and grant the deploy SPN Contributor on each.
 2. Copy `environments/test.yml` to `environments/<env>.yml` and update the display names.
 3. Deploy `platform/` to that environment's platform workspace.
-4. Deploy the workload repos — **in any order**.
+4. Deploy the workload repos.
 5. Run the seeder with `environment=<ENV>`.
 
-Step 4 is the point of the exercise. Deploy ordering is load-bearing today only because
-`parameter.yml` resolves cross-workspace references at deploy time; runtime resolution removes
-the constraint.
+**Ordering in step 4, accurately:** in v1 only the notebooks resolve at run time, so only their
+cross-workspace reads are order-free — gold can deploy before silver. Pipelines, the CopyJob and
+the semantic model still resolve at deploy time through `resolve_bindings.py`, which looks names
+up live against the target environment, so those still need their upstream to exist. Deploy order
+stops mattering entirely when the remaining item types move to runtime lookup, which is gated on
+spikes S1 and S3.
+
+## How the map reaches the seeder
+
+`scripts/run_seed_metadata.py` passes the whole `<env>.yml` **inline, base64-encoded, as a
+notebook parameter**. It is deliberately not uploaded to the lakehouse's `Files/config/`: a copy
+there is a second source of truth that anyone with workspace access can edit, after which git no
+longer describes the environment. Inline also means there is no upload step to forget, and a run
+is self-describing in its own parameters.
+
+The platform workspace ID is **not** in this file. It comes from `FABRIC_PLATFORM_WORKSPACE_ID`
+(a repo Variable for GitHub Actions, a `fabric-cicd-common` variable for Azure DevOps).
+`run_seed_metadata.py` fails with instructions when it is unset rather than guessing a default.
 
 ## Not built yet
 
-- CI upload of `<env>.yml` into `Files/config/` and the job that triggers the seeder (increment 2)
-- `pl_seed_metadata` pipeline wrapper
-- The reader helper workloads use to consume the tables (Phase 2)
 - `verify_metadata_coverage` (Phase 5)
-- A `dev.yml` — Dev's workspace display names are not captured anywhere in these repos, and Dev
-  needs its own platform workspace once Phase 2 lands, since the workload notebooks will read
-  the table at run time in Dev too. Open question for whoever owns Dev.
+- **A Dev platform workspace.** None is known to exist. Dev needs one once the workload notebooks
+  read the table at run time in Dev too, since Fabric git integration syncs those notebooks into
+  Dev the moment they merge. Create it and supply its GUID, or Dev seeding stays unavailable and
+  `dev.yml` serves only as the substitution find-side. Open question for whoever owns Dev.
+- Connections resolved by display name (spike S4). Until then they stay `from_env`.
