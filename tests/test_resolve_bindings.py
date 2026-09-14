@@ -300,3 +300,39 @@ def test_a_skipped_connection_that_mattered_is_caught_by_the_backstop(item_dir):
     dev_connection = "bdfd8e6a-abb7-41ba-9d3b-4b5707901b54"
     root = item_dir(f'{{"externalReferences": {{"connection": "{dev_connection}"}}}}')
     assert dev_connection in rb.report_unknown_guids(root, substitutions={}, excluded={})
+
+
+# --- two-pass deploy -----------------------------------------------------------------------
+
+
+def test_deferred_resolution_returns_what_it_could_not_resolve(item_dir, monkeypatch, capsys):
+    """Greenfield: an item the same deploy is about to create cannot resolve before publish.
+
+    parameter.yml never hit this, because fabric-cicd resolved $items DURING publish, after
+    creating the item. Failing here would deadlock a new environment — the deploy fails, so the
+    item is never created, so it can never resolve. deploy_fabric_item publishes and then calls
+    back strictly.
+    """
+    root = item_dir(f'{{"workspaceId": "{DEV_WS}"}}')
+    monkeypatch.setattr(rb, "session_for_service_principal", lambda: None)
+    monkeypatch.setattr(rb, "build_substitution_map",
+                        lambda dev, tgt, sess, r: ({}, {}, ["item 'lh_bronze': not found"], {}))
+
+    deferred = rb.resolve(str(root), "TEST", defer_unresolved=True)
+
+    assert deferred == ["item 'lh_bronze': not found"]
+    out = capsys.readouterr().out
+    assert "Deferring" in out
+    assert "guards deferred to the second pass" in out, (
+        "the placeholder and unknown-GUID guards must not run on a deferred pass — they would "
+        "fire on exactly the values it deliberately left alone"
+    )
+
+
+def test_a_fully_resolved_pass_returns_nothing_to_defer(item_dir, monkeypatch):
+    """The common case: an environment that already has its items runs one pass only."""
+    root = item_dir(f'{{"workspaceId": "{DEV_WS}"}}')
+    monkeypatch.setattr(rb, "session_for_service_principal", lambda: None)
+    monkeypatch.setattr(rb, "build_substitution_map",
+                        lambda dev, tgt, sess, r: ({DEV_WS: (TARGET_WS, "workspace silver")}, {}, [], {}))
+    assert rb.resolve(str(root), "TEST", defer_unresolved=True) == []

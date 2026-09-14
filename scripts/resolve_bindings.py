@@ -82,11 +82,19 @@ def dev_guids(dev_map):
 
 
 def resolve_targets(session, target_map, needed_workspaces, needed_items):
-    """Resolve the target environment's GUIDs live, by display name."""
+    """Resolve the target environment's GUIDs live, by display name.
+
+    Resolves ONLY what this repository directory actually references. The maps describe the whole
+    estate, so resolving all of it would mean every deploy required every other repo to already
+    exist — which is impossible for the first deploy by definition, and is what made
+    platform-core's own deploy unable to run at all.
+    """
     all_workspaces = api_get_all(session, "/workspaces")
     workspace_ids, unresolved, items_by_workspace = {}, [], {}
 
     for name, spec in (target_map.get("workspaces") or {}).items():
+        if name not in needed_workspaces:
+            continue
         display_name = spec.get("display_name")
         if not display_name:
             unresolved.append(f"workspace {name!r}: target map has no display_name")
@@ -117,8 +125,17 @@ def resolve_targets(session, target_map, needed_workspaces, needed_items):
             continue
         item_ids[name] = resolved
 
-    missing_workspaces = [n for n in needed_workspaces if n not in workspace_ids]
-    unresolved += [f"workspace {n!r}: not present in the target environment map" for n in missing_workspaces]
+    declared = set(target_map.get("workspaces") or {})
+    unresolved += [
+        f"workspace {n!r}: not present in the target environment map"
+        for n in needed_workspaces
+        if n not in workspace_ids and n in declared
+    ]
+    unresolved += [
+        f"workspace {n!r}: referenced by this directory but not declared in the target map"
+        for n in needed_workspaces
+        if n not in declared
+    ]
     return workspace_ids, item_ids, unresolved
 
 
@@ -147,9 +164,44 @@ def connection_values(env_map, label):
     return values, missing
 
 
-def build_substitution_map(dev_map, target_map, session):
+def directory_text(root):
+    """Every readable file under the directory, concatenated. Read once, reused."""
+    chunks = []
+    for path in candidate_files(root):
+        try:
+            chunks.append(path.read_text(encoding="utf-8"))
+        except UnicodeDecodeError:
+            continue
+    return "\n".join(chunks)
+
+
+def applicable_override_workspaces(root, target_map):
+    """Workspaces named by overrides whose item is actually in this directory."""
+    needed = set()
+    for override in target_map.get("jsonpath_overrides") or []:
+        if any(override["item_name"] in str(p) for p in candidate_files(root)):
+            needed.add(override["workspace"])
+    return needed
+
+
+def build_substitution_map(dev_map, target_map, session, root):
     dev_ws, dev_items, excluded = dev_guids(dev_map)
-    target_ws, target_items, unresolved = resolve_targets(session, target_map, dev_ws, dev_items)
+
+    # Only what this directory actually references. A binding for another repo is not "missing" —
+    # it is simply not this deploy's business, and treating it as missing is what made the first
+    # deploy of the estate impossible.
+    text = directory_text(root)
+    needed_ws = {name for name, guid in dev_ws.items() if guid in text}
+    needed_items = {name for name, guid in dev_items.items() if guid in text}
+
+    # An item's own workspace has to resolve even when its GUID never appears here.
+    for name in needed_items:
+        spec = (target_map.get("items") or {}).get(name)
+        if spec:
+            needed_ws.add(spec["workspace"])
+    needed_ws |= applicable_override_workspaces(root, target_map)
+
+    target_ws, target_items, unresolved = resolve_targets(session, target_map, needed_ws, needed_items)
 
     # Connections that this run cannot resolve are SKIPPED, not fatal.
     #
@@ -212,19 +264,13 @@ def apply_jsonpath_overrides(root, overrides, target_ws, dry_run):
     """The one case a whole-GUID swap cannot express. Applied after the global pass."""
     results = []
     for override in overrides or []:
-        workspace_logical = override["workspace"]
-        if workspace_logical not in target_ws:
-            sys.exit(
-                f"[error] jsonpath override {override.get('description')!r} targets workspace "
-                f"{workspace_logical!r}, which did not resolve in the target environment."
-            )
-        value = target_ws[workspace_logical]
-        expression = jsonpath_parse(override["path"])
-
-        # An override is declared once per environment but applied per repository directory, so
-        # most overrides are simply not applicable to most directories. "Not applicable" and
-        # "applicable but matched nothing" must be told apart: the first is normal, the second is
-        # the silent no-op this project keeps being bitten by.
+        # Applicability FIRST, before anything is required to resolve. An override is declared
+        # once per environment but applied per repository directory, so most overrides are simply
+        # not this directory's business — and demanding their workspace resolve would fail every
+        # deploy that does not contain the item, including the first one.
+        #
+        # "Not applicable" and "applicable but matched nothing" must still be told apart: the
+        # first is normal, the second is the silent no-op this project keeps being bitten by.
         candidates = [
             path
             for path in candidate_files(root)
@@ -234,6 +280,15 @@ def apply_jsonpath_overrides(root, overrides, target_ws, dry_run):
             print(f"[info] override {override.get('description')!r}: {override['item_name']} is "
                   f"not in this directory, skipping")
             continue
+
+        workspace_logical = override["workspace"]
+        if workspace_logical not in target_ws:
+            sys.exit(
+                f"[error] jsonpath override {override.get('description')!r} targets workspace "
+                f"{workspace_logical!r}, which did not resolve in the target environment."
+            )
+        value = target_ws[workspace_logical]
+        expression = jsonpath_parse(override["path"])
 
         matched_any = False
         for path in candidates:
@@ -450,7 +505,7 @@ def check_offline(repository_directory, dev_environment="DEV"):
 
 
 def resolve(repository_directory, environment, dev_environment="DEV", dry_run=False,
-            allow_unknown_guids=False, session=None):
+            allow_unknown_guids=False, session=None, defer_unresolved=False):
     """Resolve and apply every binding for one repository directory.
 
     Importable so deploy_fabric_item.py can call it directly rather than shelling out — a
@@ -470,14 +525,33 @@ def resolve(repository_directory, environment, dev_environment="DEV", dry_run=Fa
     target_map = load_env_map(environment)
 
     session = session or session_for_service_principal()
-    substitutions, excluded, unresolved, target_ws = build_substitution_map(dev_map, target_map, session)
+    substitutions, excluded, unresolved, target_ws = build_substitution_map(
+        dev_map, target_map, session, root
+    )
 
-    if unresolved:
+    if unresolved and not defer_unresolved:
         sys.exit(
             f"[error] {len(unresolved)} binding(s) did not resolve:\n  "
             + "\n  ".join(sorted(unresolved))
             + "\n\n[error] Nothing has been changed. Display names are matched literally and "
               "case-sensitively; an item that has not been deployed yet is the other usual cause."
+        )
+
+    if unresolved:
+        # First pass of a two-pass deploy into an environment where these items do not exist yet.
+        #
+        # parameter.yml never hit this: fabric-cicd resolved $items DURING publish, after creating
+        # the item. Substitution now happens BEFORE publish, so an item the very same job is about
+        # to create cannot be resolved on the first pass. Failing here would deadlock a greenfield
+        # environment — the deploy fails, so the item is never created, so it can never resolve.
+        #
+        # deploy_fabric_item publishes after this, then calls back strictly. Whatever is still
+        # unresolved on that second pass is a genuine failure.
+        print(
+            f"[warn] {len(unresolved)} binding(s) not resolvable yet:\n  "
+            + "\n  ".join(sorted(unresolved))
+            + "\n[warn] Deferring — these are created by this deploy. A second pass runs after "
+              "publish and fails if any of them are still missing."
         )
 
     print(f"[info] {len(substitutions)} binding(s) resolved for {environment}")
@@ -494,6 +568,11 @@ def resolve(repository_directory, environment, dev_environment="DEV", dry_run=Fa
     overrides = apply_jsonpath_overrides(root, target_map.get("jsonpath_overrides"), target_ws, dry_run)
     for description, before, after, path in overrides:
         print(f"[debug] {verb} {before} with {after} ({description}, {path.name})")
+
+    if unresolved:
+        # The guards below would fire on exactly the values this pass deliberately left alone.
+        print(f"[info] {len(changed)} file(s) changed; guards deferred to the second pass")
+        return unresolved
 
     if not dry_run:
         assert_no_placeholder_guids(root, placeholder_guids(dev_map))
@@ -514,7 +593,7 @@ def resolve(repository_directory, environment, dev_environment="DEV", dry_run=Fa
             sys.exit(message)
 
     print(f"[info] {len(changed)} file(s) {'would change' if dry_run else 'changed'}")
-    return substitutions
+    return []
 
 
 def main():

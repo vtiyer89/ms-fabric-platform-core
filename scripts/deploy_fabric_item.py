@@ -111,7 +111,14 @@ def main():
     # runner. This is what parameter.yml used to do; see scripts/resolve_bindings.py for why it
     # needs no per-rule configuration. It exits non-zero on an unresolved binding or an
     # unaccounted-for GUID, so nothing unparameterised reaches the API.
-    resolve_bindings.resolve(args.repository_directory, args.environment)
+    # Two passes, because substitution happens BEFORE publish while some references point at
+    # items this very deploy creates. On an environment that already has them, pass 1 resolves
+    # everything and pass 2 never runs. On a greenfield one, pass 1 defers what does not exist
+    # yet, publish creates it, and pass 2 resolves strictly — which is also where the placeholder
+    # and unknown-GUID guards run, so nothing is skipped, only postponed.
+    deferred = resolve_bindings.resolve(
+        args.repository_directory, args.environment, defer_unresolved=True
+    )
 
     token_credential = ClientSecretCredential(
         client_id=os.environ["AZURE_CLIENT_ID"],
@@ -128,6 +135,22 @@ def main():
     )
 
     publish_all_items(target_workspace, items_to_include=items_to_include)
+
+    if deferred:
+        print(f"[info] second pass: resolving {len(deferred)} binding(s) the publish just created")
+        resolve_bindings.resolve(args.repository_directory, args.environment)
+        # A fresh FabricWorkspace: the first one cached the repository files as they were read
+        # before the second substitution, so republishing through it would push the pre-pass-2
+        # content and silently undo the work.
+        target_workspace = FabricWorkspace(
+            workspace_id=args.workspace_id,
+            environment=args.environment,
+            repository_directory=args.repository_directory,
+            item_type_in_scope=args.items_in_scope.split(","),
+            token_credential=token_credential,
+        )
+        publish_all_items(target_workspace, items_to_include=items_to_include)
+
     # Orphan cleanup deliberately compares against every item in repository_directory, not just
     # the published subset — otherwise each job would treat the other layer's items as orphans
     # and delete them.
