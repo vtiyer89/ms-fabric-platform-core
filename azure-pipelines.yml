@@ -21,12 +21,23 @@
 trigger: none
 pr: none
 
+parameters:
+  - name: platformCoreRef
+    type: string
+    default: refs/heads/main
+    displayName: >
+      Branch or tag of ms-fabric-platform-core to take the template and scripts from. Use
+      refs/heads/<branch> to test changes before merging. Unlike the GitHub side this DOES pick
+      up template changes too, because an ADO repository resource ref is resolved at compile time
+      and can be a parameter.
+
+
 resources:
   repositories:
     - repository: platform-core
       type: git
       name: <YOUR-ADO-PROJECT>/ms-fabric-platform-core
-      ref: refs/heads/main
+      ref: ${{ parameters.platformCoreRef }}
 
 jobs:
   - template: pipelines/templates/deploy-fabric-item.yml@platform-core

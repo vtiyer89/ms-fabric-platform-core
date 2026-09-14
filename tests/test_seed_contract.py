@@ -91,3 +91,39 @@ def test_seeder_reads_connection_id_not_from_env():
     assert 'spec["from_env"]' not in source, (
         "the seeder must not read from_env — it runs in Fabric, where CI variables do not exist"
     )
+
+
+def test_partial_connections_are_dropped_not_fatal_when_allowed(monkeypatch):
+    """A per-repo seed only ever carries its OWN connection variables.
+
+    ingestion's deploy passes the copy-job connection and nothing else, so requiring all four
+    would have failed the seed step in every item repo — at the tail of every deploy.
+    """
+    for variable in ("TEST_COPY_JOB_CONNECTION_ID", "TEST_SILVER_CONNECTION_ID"):
+        monkeypatch.delenv(variable, raising=False)
+        monkeypatch.delenv(f"FABRIC_PARAM_{variable}", raising=False)
+    monkeypatch.setenv("FABRIC_PARAM_TEST_COPY_JOB_CONNECTION_ID", "aaa")
+
+    env_map = {
+        "connections": {
+            "copy_job": {"from_env": "TEST_COPY_JOB_CONNECTION_ID"},
+            "silver_notebook": {"from_env": "TEST_SILVER_CONNECTION_ID"},
+        }
+    }
+    resolved = rsm.resolve_from_env(env_map, allow_unresolved=True)
+
+    assert resolved["connections"]["copy_job"]["connection_id"] == "aaa"
+    assert "silver_notebook" not in resolved["connections"], (
+        "an unsupplied connection must be dropped, not written with a placeholder value"
+    )
+
+
+def test_partial_connections_are_still_fatal_when_strict(monkeypatch):
+    """The standalone seed workflow runs strict precisely to prove the set is complete."""
+    monkeypatch.delenv("TEST_SILVER_CONNECTION_ID", raising=False)
+    monkeypatch.delenv("FABRIC_PARAM_TEST_SILVER_CONNECTION_ID", raising=False)
+    with pytest.raises(SystemExit):
+        rsm.resolve_from_env(
+            {"connections": {"silver_notebook": {"from_env": "TEST_SILVER_CONNECTION_ID"}}},
+            allow_unresolved=False,
+        )

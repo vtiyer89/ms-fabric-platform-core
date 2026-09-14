@@ -88,7 +88,7 @@ def session_for_service_principal():
     return session
 
 
-def resolve_from_env(env_map):
+def resolve_from_env(env_map, allow_unresolved=False):
     """Turn every connection's `from_env` into a literal before the map leaves this machine.
 
     The seeder runs inside Fabric, where the CI runner's environment does not exist — so a
@@ -97,6 +97,12 @@ def resolve_from_env(env_map):
 
     Both spellings are accepted, matching resolve_bindings: the bare name and the
     FABRIC_PARAM_<NAME> form CI already sets for the old $ENV: tokens.
+
+    allow_unresolved drops the ones nothing supplies instead of refusing. That is not a
+    weakening: a per-repo seed only ever has ITS OWN connection variables — ingestion's deploy
+    carries the copy-job connection and nothing else — so requiring all four would fail the seed
+    step in every item repo. The dropped names are printed, and a later run that does have them
+    fills the rows in. Run the standalone seed workflow strictly to prove the set is complete.
     """
     missing = []
     for name, spec in (env_map.get("connections") or {}).items():
@@ -114,16 +120,29 @@ def resolve_from_env(env_map):
         spec["connection_id"] = value
 
     if missing:
-        sys.exit(
-            f"[error] {len(missing)} connection(s) could not be resolved:\n  "
-            + "\n  ".join(missing)
-            + "\n\n[error] These are the one class with no live resolution. Nothing has been "
-              "seeded."
+        if not allow_unresolved:
+            sys.exit(
+                f"[error] {len(missing)} connection(s) could not be resolved:\n  "
+                + "\n  ".join(missing)
+                + "\n\n[error] These are the one class with no live resolution. Nothing has "
+                  "been seeded."
+            )
+        print(
+            f"[warn] {len(missing)} connection(s) not supplied by this run and NOT being "
+            f"written:\n  " + "\n  ".join(missing) + "\n"
+            f"[warn] Expected for a per-repo seed, which only carries its own connection "
+            f"variables. Run the standalone seed workflow with every variable set to write them "
+            f"all."
         )
+        for name in list(env_map.get("connections") or {}):
+            spec = env_map["connections"][name]
+            if "connection_id" not in spec:
+                del env_map["connections"][name]
+
     return env_map
 
 
-def read_environment_map_b64(environment):
+def read_environment_map_b64(environment, allow_unresolved=False):
     """The whole <env>.yml, connections resolved, base64-encoded as one notebook parameter."""
     path = ENV_MAP_DIRECTORY / f"{environment.lower()}.yml"
     if not path.exists():
@@ -131,7 +150,7 @@ def read_environment_map_b64(environment):
             f"[error] no environment map at {path}.\n"
             f"[error] Every environment needs one; it is the only file edited per environment."
         )
-    env_map = resolve_from_env(yaml.safe_load(path.read_text()))
+    env_map = resolve_from_env(yaml.safe_load(path.read_text()), allow_unresolved)
     rendered = yaml.safe_dump(env_map, sort_keys=False)
     return base64.b64encode(rendered.encode("utf-8")).decode("ascii"), rendered
 
@@ -246,7 +265,7 @@ def main():
             "[error] --workspace-id to override it for a local run."
         )
 
-    env_map_b64, rendered_map = read_environment_map_b64(args.environment)
+    env_map_b64, rendered_map = read_environment_map_b64(args.environment, args.allow_unresolved)
     session = session_for_service_principal()
 
     notebook_id = resolve_notebook_id(session, args.workspace_id)

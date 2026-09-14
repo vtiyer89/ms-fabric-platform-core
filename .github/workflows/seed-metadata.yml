@@ -1,0 +1,75 @@
+name: Seed metadata table (manual)
+
+# Run the seeder on its own, from ANY branch, without deploying anything.
+#
+# This workflow is deliberately SELF-CONTAINED — it does not `uses:` the reusable workflow. A
+# `uses:` reference cannot be an expression in GitHub Actions, so it would always pull the
+# definition from whatever ref is hardcoded there (main), and you would not be testing your
+# branch. Checking out `self` gets the branch you dispatched from, scripts and environment maps
+# together, which is the whole point of this workflow.
+#
+# It runs STRICT by default: every logical name and every connection must resolve. That is the
+# opposite of the per-deploy seed, which runs with --allow-unresolved because it necessarily
+# sees a partly-deployed estate. Use this to prove the set is actually complete.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment map to seed from (metadata/environments/<lowercase>.yml)"
+        type: choice
+        options: [TEST, DEV]
+        default: TEST
+      allow-unresolved:
+        description: "Seed what resolves instead of failing. Leave OFF to prove completeness."
+        type: boolean
+        default: false
+      platform-workspace-id:
+        description: "Override the platform workspace GUID. Blank uses the repo Variable."
+        type: string
+        default: ""
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      # The branch you dispatched from — its scripts AND its environment maps.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r scripts/requirements.txt
+
+      - name: Show what is about to be seeded
+        run: |
+          echo "ref         : ${{ github.ref_name }}"
+          echo "commit      : ${{ github.sha }}"
+          echo "environment : ${{ inputs.environment }}"
+          echo "strict      : ${{ !inputs.allow-unresolved }}"
+          echo
+          echo "This records a row in md_seed_run tagged with the ref and commit above,"
+          echo "so a test seed from a branch is distinguishable from a real one later."
+
+      - name: Seed
+        run: |
+          python scripts/run_seed_metadata.py \
+            --environment "${{ inputs.environment }}" \
+            ${{ inputs.allow-unresolved && '--allow-unresolved' || '' }}
+        env:
+          FABRIC_PLATFORM_WORKSPACE_ID: ${{ inputs.platform-workspace-id != '' && inputs.platform-workspace-id || vars.FABRIC_PLATFORM_WORKSPACE_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          # All four connections, because a strict seed writes the whole md_connection table.
+          # These must exist as Variables on THIS repo (or as org Variables) — the item repos
+          # each carry only their own, which is why their per-deploy seed runs partial.
+          FABRIC_PARAM_TEST_COPY_JOB_CONNECTION_ID: ${{ vars.TEST_COPY_JOB_CONNECTION_ID }}
+          FABRIC_PARAM_TEST_SILVER_CONNECTION_ID: ${{ vars.TEST_SILVER_CONNECTION_ID }}
+          FABRIC_PARAM_TEST_GOLD_CONNECTION_ID: ${{ vars.TEST_GOLD_CONNECTION_ID }}
+          FABRIC_PARAM_TEST_PIPELINE_INVOKE_CONNECTION_ID: ${{ vars.TEST_PIPELINE_INVOKE_CONNECTION_ID }}
+          FABRIC_PARAM_DEV_COPY_JOB_CONNECTION_ID: ${{ vars.DEV_COPY_JOB_CONNECTION_ID }}
+          FABRIC_PARAM_DEV_SILVER_CONNECTION_ID: ${{ vars.DEV_SILVER_CONNECTION_ID }}
+          FABRIC_PARAM_DEV_GOLD_CONNECTION_ID: ${{ vars.DEV_GOLD_CONNECTION_ID }}
+          FABRIC_PARAM_DEV_PIPELINE_INVOKE_CONNECTION_ID: ${{ vars.DEV_PIPELINE_INVOKE_CONNECTION_ID }}

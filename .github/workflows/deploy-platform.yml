@@ -15,7 +15,16 @@ name: Deploy platform items to Fabric Test
 # the connections and the config. The other twelve items are not deployed yet, which is exactly
 # what --allow-unresolved is for; each later deploy re-seeds and fills in its own items.
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      platform-core-ref:
+        description: >
+          Branch or tag of ms-fabric-platform-core to take the deploy and seed SCRIPTS from.
+          Use a feature branch to test script changes. NOTE the reusable workflow DEFINITION
+          still comes from @main — `uses:` cannot be an expression in GitHub Actions — so a
+          change to deploy-fabric-item.yml itself is not exercised by this.
+        type: string
+        default: main
 
 jobs:
   deploy-platform:
@@ -23,6 +32,7 @@ jobs:
     with:
       workspace-id: ${{ vars.FABRIC_PLATFORM_WORKSPACE_ID }}
       environment-name: TEST
+      platform-core-ref: ${{ inputs.platform-core-ref }}
       platform-workspace-id: ${{ vars.FABRIC_PLATFORM_WORKSPACE_ID }}
       repository-directory: platform
       items-in-scope: "Lakehouse,Notebook"
