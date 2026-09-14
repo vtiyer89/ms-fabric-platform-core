@@ -325,6 +325,48 @@ def guids_in_file(path):
     return found
 
 
+def placeholder_guids(dev_map):
+    """Sentinel GUIDs standing in for Dev values that do not exist yet.
+
+    The Dev platform workspace is the only case today. A sentinel reads exactly like a real GUID
+    in a diff, and the failure it causes — a workload lakehouse shortcutting into nothing —
+    surfaces only at run time as "table not found", hours later and in one workspace.
+    """
+    found = {}
+    for section in ("workspaces", "items"):
+        for name, spec in (dev_map.get(section) or {}).items():
+            if spec.get("placeholder"):
+                guid = spec.get("workspace_id") or spec.get("item_id")
+                if guid:
+                    found[guid] = name
+    return found
+
+
+def assert_no_placeholder_guids(root, placeholders):
+    """Fail if a sentinel survived substitution."""
+    if not placeholders:
+        return
+    surviving = {}
+    for path in candidate_files(root):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        for guid, name in placeholders.items():
+            if guid in text:
+                surviving.setdefault(f"{name} ({guid})", set()).add(path.name)
+    if surviving:
+        lines = [f"{label}  in {', '.join(sorted(files))}" for label, files in sorted(surviving.items())]
+        sys.exit(
+            f"[error] {len(surviving)} placeholder GUID(s) are still present after substitution:\n  "
+            + "\n  ".join(lines)
+            + "\n\n[error] These are sentinels for Dev values that do not exist. Shipping one "
+              "produces a shortcut pointing at nothing, which fails at run time as "
+              "\"table not found\" rather than at deploy time. Check that the target "
+              "environment's map resolves the logical name."
+        )
+
+
 def report_unknown_guids(root, substitutions, excluded):
     """GUIDs left behind that nothing accounts for.
 
@@ -397,6 +439,9 @@ def resolve(repository_directory, environment, dev_environment="DEV", dry_run=Fa
     overrides = apply_jsonpath_overrides(root, target_map.get("jsonpath_overrides"), target_ws, dry_run)
     for description, before, after, path in overrides:
         print(f"[debug] {verb} {before} with {after} ({description}, {path.name})")
+
+    if not dry_run:
+        assert_no_placeholder_guids(root, placeholder_guids(dev_map))
 
     unknown = report_unknown_guids(root, substitutions, excluded)
     if unknown:

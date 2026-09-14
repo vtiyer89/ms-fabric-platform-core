@@ -235,3 +235,38 @@ def test_override_splits_one_dev_guid_into_two_targets(item_dir):
     result = json.loads(path.read_text())["properties"]["activities"]
     assert result[0]["typeProperties"]["workspaceId"] == "LANDING-WS"
     assert result[1]["typeProperties"]["workspaceId"] == "BRONZE-WS"
+
+
+# --- placeholder sentinels -----------------------------------------------------------------
+
+SENTINEL = "deadbeef-0000-0000-0000-00000000c0de"
+
+
+def test_placeholder_guids_are_collected_from_either_section():
+    dev_map = {
+        "workspaces": {"platform": {"workspace_id": SENTINEL, "placeholder": True},
+                       "silver": {"workspace_id": DEV_WS}},
+        "items": {"lh_platform_metadata": {"item_id": "deadbeef-0000-0000-0000-00000000face",
+                                           "placeholder": True}},
+    }
+    found = rb.placeholder_guids(dev_map)
+    assert found == {SENTINEL: "platform",
+                     "deadbeef-0000-0000-0000-00000000face": "lh_platform_metadata"}
+    assert DEV_WS not in found
+
+
+def test_surviving_placeholder_fails_the_deploy(item_dir):
+    """A shipped sentinel produces a shortcut pointing at nothing.
+
+    That fails at run time as "table not found", in one workspace, hours later — the shape of
+    bug this framework exists to move to deploy time.
+    """
+    root = item_dir(f'{{"workspaceId": "{SENTINEL}"}}')
+    with pytest.raises(SystemExit) as exit_info:
+        rb.assert_no_placeholder_guids(root, {SENTINEL: "platform"})
+    assert "placeholder" in str(exit_info.value)
+
+
+def test_substituted_placeholder_passes(item_dir):
+    root = item_dir(f'{{"workspaceId": "{TARGET_WS}"}}')
+    rb.assert_no_placeholder_guids(root, {SENTINEL: "platform"})

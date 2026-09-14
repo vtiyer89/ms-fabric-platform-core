@@ -45,9 +45,22 @@ workspaces:
     # orchestration:
     #     workspace_id: "<YOUR-DEV-ORCHESTRATION-WORKSPACE-ID>"
 
-    # No Dev platform workspace is known to exist. See metadata/README.md.
-    # platform:
-    #     workspace_id: "<YOUR-DEV-PLATFORM-WORKSPACE-ID>"
+    # NO DEV PLATFORM WORKSPACE EXISTS. These are sentinels, not real GUIDs.
+    #
+    # The md_* shortcuts in each workload lakehouse need a find-side value so the deploy can
+    # rewrite them to the target environment's platform workspace. Dev has nothing to point at,
+    # so shortcuts.metadata.json carries these two obviously-fake values and the deploy swaps
+    # them out like any other binding.
+    #
+    # placeholder: true is why they are safe. A sentinel reads exactly like a real GUID in a
+    # diff, and the failure it causes — a workload shortcutting into nothing — surfaces only at
+    # run time as "table not found". assert_no_placeholder_guids fails the deploy if one is
+    # still present after substitution.
+    #
+    # Replace both with real GUIDs when a Dev platform workspace exists, and drop the flag.
+    platform:
+        workspace_id: "deadbeef-0000-0000-0000-00000000c0de"
+        placeholder: true
 
 items:
     # --- Referenced by other items, so harvested from a find_value -------------------------
@@ -86,6 +99,13 @@ items:
         workspace: gold
         type: DataPipeline
         item_id: "5679224f-ae48-440f-a5a9-7edca59b6b45"
+
+    # Sentinel, like the platform workspace above. See the note there.
+    lh_platform_metadata:
+        workspace: platform
+        type: Lakehouse
+        item_id: "deadbeef-0000-0000-0000-00000000face"
+        placeholder: true
 
     # --- Referenced by nothing, so no Dev GUID was ever recorded ---------------------------
     # These resolve by display name, which only works during an actual Dev seed (the identity
