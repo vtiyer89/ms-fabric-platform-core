@@ -1,5 +1,22 @@
 # `parameter.yml` placeholder reference
 
+> **SUPERSEDED (2026-09-14).** `parameter.yml` and `parameter.template.yml` no longer exist.
+> Per-tenant configuration now lives in `metadata/environments/<env>.yml`, and deploy-time
+> substitution is done by `scripts/resolve_bindings.py`. See `metadata/README.md` for the
+> current shape and `docs/metadata-driven-deployment-plan.md` for why.
+>
+> This document is kept for two reasons and should not be followed as a procedure:
+>
+> - **The inventory below is still the authoritative list of what has to be true per tenant** —
+>   the same 13 Dev GUIDs, 4 connections and 4 workspace display names, now expressed as logical
+>   names in the environment maps rather than as placeholders in five files.
+> - **The three classes of value, and why each is handled differently, still hold.** Class 1
+>   (connections, no live resolution) is why the maps still carry `from_env`. Class 3 (display
+>   names matched literally and case-sensitively) is why a rename is still a fan-out, though now
+>   to one file plus a variable group rather than to five.
+>
+> The `git show pre-metadata-v1` tag has the files this describes, if you need them.
+
 Every GUID and connection ID that has to change when this project is pointed at a different
 tenant, and where each one comes from.
 

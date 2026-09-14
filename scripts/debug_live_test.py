@@ -26,12 +26,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import resolve_bindings  # noqa: E402
 from azure.identity import AzureCliCredential  # noqa: E402
-from deploy_fabric_item import (  # noqa: E402
-    assert_all_tokens_resolvable,
-    assert_find_values_present,
-    inject_parameter_env_vars,
-)
 from fabric_cicd import (  # noqa: E402
     FabricWorkspace,
     append_feature_flag,
@@ -51,9 +47,9 @@ def main():
     change_log_level("DEBUG")
 
     append_feature_flag("enable_environment_variable_replacement")
-    provided = inject_parameter_env_vars()
-    assert_all_tokens_resolvable(args.repository_directory, provided)
-    assert_find_values_present(args.repository_directory)
+    # Same substitution the real deploy does, against the same environment maps — otherwise
+    # this would publish Dev GUIDs while appearing to prove the opposite.
+    resolve_bindings.resolve(args.repository_directory, args.environment)
 
     target_workspace = FabricWorkspace(
         workspace_id=args.workspace_id,

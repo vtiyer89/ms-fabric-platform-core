@@ -394,6 +394,54 @@ def report_unknown_guids(root, substitutions, excluded):
     return unknown
 
 
+def check_offline(repository_directory, dev_environment="DEV"):
+    """Validate what can be validated without credentials.
+
+    The replacement for debug_parameterization.py, which was offline and is the thing the
+    fabric-verify skill runs. It cannot resolve targets — that needs the API — but it catches
+    the class of mistake that used to be caught by assert_find_values_present: a Dev GUID in the
+    map that appears nowhere in the item definitions, which means the binding is stale and the
+    substitution will silently do nothing.
+    """
+    root = pathlib.Path(repository_directory)
+    if not root.is_dir():
+        sys.exit(f"[error] --repository-directory {root} is not a directory")
+
+    dev_map = load_env_map(dev_environment)
+    workspaces, items, excluded = dev_guids(dev_map)
+    placeholders = placeholder_guids(dev_map)
+
+    corpus = {}
+    for path in candidate_files(root):
+        try:
+            corpus[path] = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+
+    present, absent = [], []
+    for label, guid in [(f"workspace {n}", g) for n, g in workspaces.items()] + [
+        (f"item {n}", g) for n, g in items.items()
+    ]:
+        where = [p.name for p, text in corpus.items() if guid in text]
+        (present if where else absent).append((label, guid, where))
+
+    for label, guid, where in sorted(present):
+        note = " (placeholder)" if guid in placeholders else ""
+        print(f"[ok]   {label}{note}: {guid} in {', '.join(sorted(set(where)))}")
+    for label, guid, _ in sorted(absent):
+        print(f"[--]   {label}: {guid} appears nowhere under {root}")
+
+    print(
+        f"\n[info] {len(present)} of {len(present) + len(absent)} Dev bindings are present here. "
+        f"A binding absent from THIS directory is normal — the maps describe the whole estate."
+    )
+    print(
+        "[info] Offline only. Target GUIDs, jsonpath overrides and the unknown-GUID guard all "
+        "need credentials; run without --offline to check those."
+    )
+    return present, absent
+
+
 def resolve(repository_directory, environment, dev_environment="DEV", dry_run=False,
             allow_unknown_guids=False, session=None):
     """Resolve and apply every binding for one repository directory.
@@ -465,7 +513,10 @@ def resolve(repository_directory, environment, dev_environment="DEV", dry_run=Fa
 def main():
     parser = argparse.ArgumentParser(description="Resolve Dev GUIDs to a target environment.")
     parser.add_argument("--repository-directory", required=True)
-    parser.add_argument("--environment", required=True, help="Target environment, e.g. TEST")
+    parser.add_argument(
+        "--environment",
+        help="Target environment, e.g. TEST. Not needed with --offline.",
+    )
     parser.add_argument("--dev-environment", default="DEV", help="Map holding the find-side GUIDs")
     parser.add_argument(
         "--dry-run",
@@ -473,11 +524,24 @@ def main():
         help="Print every substitution that would be applied and change nothing.",
     )
     parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Validate the maps and Dev GUID presence without credentials. No API calls.",
+    )
+    parser.add_argument(
         "--allow-unknown-guids",
         action="store_true",
         help="Report unaccounted-for GUIDs without failing. Off by default.",
     )
     args = parser.parse_args()
+
+    if args.offline:
+        check_offline(args.repository_directory, dev_environment=args.dev_environment)
+        return
+
+    if not args.environment:
+        parser.error("--environment is required unless --offline is given")
+
     resolve(
         args.repository_directory,
         args.environment,
