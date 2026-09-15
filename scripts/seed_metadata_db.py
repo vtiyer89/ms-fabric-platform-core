@@ -101,6 +101,19 @@ def connect(server_fqdn: str, database_name: str, credential: ClientSecretCreden
     return pyodbc.connect(connection_string, attrs_before={SQL_COPT_SS_ACCESS_TOKEN: token_struct})
 
 
+def probe_connection(conn: pyodbc.Connection) -> None:
+    """Run a trivial no-op query before any DDL, to isolate connection/identity-resolution
+    failures from anything statement-specific. If this fails the same way the real DDL does,
+    it proves the failure has nothing to do with CREATE SCHEMA or any particular statement --
+    the connection's security context can't resolve at all, for any command.
+    """
+    print("[probe] running SELECT 1 to isolate identity-resolution failures from DDL content...")
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 AS ok;")
+    row = cursor.fetchone()
+    print(f"[probe] SELECT 1 succeeded (returned {row.ok}) -- connection's security context resolves fine.")
+
+
 def apply_ddl(conn: pyodbc.Connection, dry_run: bool) -> None:
     for sql_file in sorted(SQL_DIR.glob("*.sql")):
         statements = [s.strip() for s in sql_file.read_text().split("GO") if s.strip()]
@@ -109,6 +122,7 @@ def apply_ddl(conn: pyodbc.Connection, dry_run: bool) -> None:
             continue
         cursor = conn.cursor()
         for statement in statements:
+            print(f"[exec] {sql_file.name}: {statement[:120]}{'...' if len(statement) > 120 else ''}")
             cursor.execute(statement)
         conn.commit()
         print(f"[ok] applied {sql_file.name}")
@@ -224,6 +238,8 @@ def main():
     print(f"[info] resolved {SQL_DATABASE_ITEM_NAME} -> {server_fqdn}/{database_name}")
 
     conn = None if args.dry_run else connect(server_fqdn, database_name, credential)
+    if conn is not None:
+        probe_connection(conn)
 
     apply_ddl(conn, args.dry_run)
     source_count = upsert_source_systems(conn, args.environment, args.dry_run)
