@@ -24,6 +24,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import struct
 import sys
 from pathlib import Path
@@ -116,9 +117,21 @@ def probe_connection(conn: pyodbc.Connection) -> None:
     print(f"[probe] SELECT 1 succeeded (returned {row.ok}) -- connection's security context resolves fine.")
 
 
+def split_sql_batches(text: str) -> list[str]:
+    """Split T-SQL source on GO batch separators.
+
+    GO must stand alone on its own line (optionally with surrounding whitespace) to count --
+    a plain `text.split("GO")` is a substring match and will split inside any comment or string
+    that happens to contain the two letters "G" and "O" together (this bit a real DDL file here:
+    a comment reading "...kept in its own file/GO block..." got sliced in half by the naive
+    version, and pyodbc dutifully tried to execute half a comment as a statement).
+    """
+    return [s.strip() for s in re.split(r"^[ \t]*GO[ \t]*$", text, flags=re.IGNORECASE | re.MULTILINE) if s.strip()]
+
+
 def apply_ddl(conn: pyodbc.Connection, dry_run: bool) -> None:
     for sql_file in sorted(SQL_DIR.glob("*.sql")):
-        statements = [s.strip() for s in sql_file.read_text().split("GO") if s.strip()]
+        statements = split_sql_batches(sql_file.read_text())
         if dry_run:
             print(f"[dry-run] would execute {sql_file.name} ({len(statements)} statement(s))")
             continue
