@@ -1,0 +1,14 @@
+{
+  "_comment": "Version-controlled seed content for metadata.SourceSystemConfig, upserted idempotently by scripts/seed_metadata_db.py. Values from docs/metadata-db-mapping.md -- there is one source system in the estate. landingLakehouse is a logical name, resolved against target_stores.json's target_name (not a GUID -- deploy-time identity for landing itself lives in TargetStoreConfig, per the grain decision in docs/metadata-db-mapping.md).",
+  "source_systems": [
+    {
+      "source_system_name": "nyc_taxi_yellow",
+      "source_type": "file",
+      "config": {
+        "fileName": "yellow_tripdata_2026-01.parquet",
+        "compression": "snappy",
+        "landingLakehouse": "lh_landing_nyc_taxi"
+      }
+    }
+  ]
+}

@@ -1,3 +1,8 @@
 fabric-cicd==1.3.0
 azure-identity>=1.19,<2
 pyyaml
+# For scripts/seed_metadata_db.py -- connects directly to the Fabric SQL database, since
+# fabric-cicd's SQLDatabasePublisher is shell-only and never executes DDL (see that script's
+# docstring). Requires the msodbcsql18 system driver too; see .github/workflows/deploy-platform.yml.
+pyodbc
+requests

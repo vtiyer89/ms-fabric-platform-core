@@ -1,0 +1,61 @@
+name: Deploy Platform (metadata database)
+
+# platform-core becomes an item repo again for this POC: platform/ holds db_platform_metadata,
+# a Fabric SQL database with the team's metadata schema (see docs/metadata-db-mapping.md).
+#
+# Two jobs: deploy the SqlDatabase item shell via the shared reusable workflow (same as every
+# other item repo), then seed it. Seeding is a separate job, not a step inside the reusable
+# workflow, because fabric-cicd's SQLDatabasePublisher never executes DDL -- creating the schema
+# and tables is scripts/seed_metadata_db.py's job, run directly against the database, not through
+# fabric-cicd at all.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: TEST
+        type: choice
+        options: [DEV, TEST]
+
+jobs:
+  deploy-platform-db:
+    uses: vtiyer89/ms-fabric-platform-core/.github/workflows/deploy-fabric-item.yml@main
+    with:
+      workspace-id: ${{ inputs.environment == 'DEV' && vars.DEV_PLATFORM_WORKSPACE_ID || vars.TEST_PLATFORM_WORKSPACE_ID }}
+      environment-name: ${{ inputs.environment }}
+      repository-directory: platform
+      items-in-scope: "SQLDatabase"
+    secrets: inherit
+
+  seed-platform-db:
+    needs: deploy-platform-db
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # msodbcsql18 isn't preinstalled on GitHub-hosted Ubuntu runners; pyodbc needs it to talk
+      # to the Fabric SQL database. Standard Microsoft package-repo install.
+      - name: Install ODBC Driver 18 for SQL Server
+        run: |
+          curl -sSL -O https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
+          sudo dpkg -i packages-microsoft-prod.deb
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
+
+      - name: Install Python dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Seed metadata.SourceSystemConfig / metadata.TargetStoreConfig
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          python scripts/seed_metadata_db.py \
+            --workspace-id "${{ inputs.environment == 'DEV' && vars.DEV_PLATFORM_WORKSPACE_ID || vars.TEST_PLATFORM_WORKSPACE_ID }}" \
+            --environment "${{ inputs.environment }}"
