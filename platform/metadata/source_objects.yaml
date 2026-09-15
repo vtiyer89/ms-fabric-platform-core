@@ -6,6 +6,13 @@
 # LayerName values here ('Landing', 'Bronze', ...) intentionally match the casing in the team's
 # own sample SourceObjectConfig data, which differs from target_stores.yaml's lowercase
 # layer_name -- a known inconsistency between the two files, not yet harmonized.
+#
+# fileName/filePath live on the LANDING row's config, not Bronze's: the file itself lives in
+# Landing, so that's where its identity belongs. Bronze's config describes the load behavior into
+# that layer, not the file. pl_master_landing.DataPipeline calls usp_GetCopyJobConfig twice --
+# once with LayerName='Landing' to resolve the source file + where it sits, once with
+# LayerName='Bronze' to resolve the destination -- so this placement matters directly for that
+# pipeline to work.
 
 source_objects:
   - source_system_name: nyc_taxi_yellow
@@ -13,16 +20,16 @@ source_objects:
     layer_name: Landing
     target_name: lh_landing_nyc_taxi
     load_type: api
-    config: {}
+    config:
+      fileName: yellow_tripdata_2026-01.parquet
+      filePath: Files/
 
   - source_system_name: nyc_taxi_yellow
     source_object_name: yellow_cab_trip_data
     layer_name: Bronze
     target_name: yellow_cab_trip_data_bronze
     load_type: Overwrite
-    config:
-      fileName: yellow_tripdata_2026-01.parquet
-      filePath: Files/
+    config: {}
 
   - source_system_name: nyc_taxi_yellow
     source_object_name: yellow_cab_trip_data
