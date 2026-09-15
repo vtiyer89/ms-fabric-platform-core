@@ -221,6 +221,62 @@ def upsert_target_stores(conn: pyodbc.Connection, environment: str, dry_run: boo
     return written
 
 
+def upsert_source_objects(conn: pyodbc.Connection, dry_run: bool) -> int:
+    """Bridges SourceSystemConfig and TargetStoreConfig: which object, at which layer, loaded how.
+
+    source_system_name / target_name are natural-key references, not raw IDs -- SourceSystemId /
+    TargetStoreID are IDENTITY-generated in the other two tables and unknowable ahead of time in
+    version-controlled JSON, so they're resolved live via subquery in the MERGE's USING clause.
+    A natural key that doesn't resolve (typo, or seeded before its parent row exists) hits the
+    NOT NULL constraint on SourceSystemId/TargetStoreID and fails loudly, by design -- no need
+    for a separate Python-side check.
+    """
+    data = json.loads((METADATA_DIR / "source_objects.json").read_text())
+    rows = data["source_objects"]
+
+    merge_sql = """
+    MERGE metadata.SourceObjectConfig AS target
+    USING (
+        SELECT
+            (SELECT SourceSystemId FROM metadata.SourceSystemConfig WHERE SourceSystemName = ?) AS SourceSystemId,
+            ? AS SourceObjectName,
+            ? AS LayerName,
+            CAST((SELECT TargetStoreConfigId FROM metadata.TargetStoreConfig WHERE TargetName = ?) AS NVARCHAR(200)) AS TargetStoreID,
+            ? AS LoadType,
+            ? AS Config
+    ) AS source
+        ON target.SourceSystemId = source.SourceSystemId
+           AND target.SourceObjectName = source.SourceObjectName
+           AND target.LayerName = source.LayerName
+    WHEN MATCHED AND target.IsActive = 1 THEN
+        UPDATE SET TargetStoreID = source.TargetStoreID, LoadType = source.LoadType,
+                   Config = source.Config, UpdatedDate = SYSUTCDATETIME(), ModifiedBy = SUSER_SNAME()
+    WHEN NOT MATCHED THEN
+        INSERT (SourceSystemId, SourceObjectName, LayerName, TargetStoreID, LoadType, Config)
+        VALUES (source.SourceSystemId, source.SourceObjectName, source.LayerName,
+                source.TargetStoreID, source.LoadType, source.Config);
+    """
+
+    if dry_run:
+        for row in rows:
+            print(f"[dry-run] would upsert SourceObjectConfig: {row['source_object_name']}/{row['layer_name']}")
+        return len(rows)
+
+    cursor = conn.cursor()
+    for row in rows:
+        cursor.execute(
+            merge_sql,
+            row["source_system_name"],
+            row["source_object_name"],
+            row["layer_name"],
+            row["target_name"],
+            row["load_type"],
+            json.dumps(row["config"]),
+        )
+    conn.commit()
+    return len(rows)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--workspace-id", required=True, help="Platform workspace holding db_platform_metadata")
@@ -244,9 +300,13 @@ def main():
     apply_ddl(conn, args.dry_run)
     source_count = upsert_source_systems(conn, args.environment, args.dry_run)
     target_count = upsert_target_stores(conn, args.environment, args.dry_run)
+    # Must run after both of the above: its MERGE resolves SourceSystemId/TargetStoreID by
+    # looking up their natural keys in the tables those two functions just populated.
+    object_count = upsert_source_objects(conn, args.dry_run)
 
     print(f"[done] SourceSystemConfig: {source_count} row(s) processed")
     print(f"[done] TargetStoreConfig: {target_count} row(s) processed")
+    print(f"[done] SourceObjectConfig: {object_count} row(s) processed")
 
 
 if __name__ == "__main__":
