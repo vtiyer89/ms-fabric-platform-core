@@ -1,0 +1,79 @@
+# Version-controlled seed content for metadata.TargetStoreConfig, upserted idempotently by
+# scripts/seed_metadata_db.py. Values sourced from docs/metadata-db-mapping.md (DEV values read
+# out of the item definitions currently hardcoded in ms-fabric-ingestion/ms-fabric-dd-trip-data;
+# TEST values as recorded there). target_lakehouse_id for TEST is genuinely unknown -- no Test
+# lakehouse GUID was ever written down anywhere in these repos (see docs/metadata-db-mapping.md)
+# -- and is left as an explicit placeholder. seed_metadata_db.py warns (does not fail) when it
+# seeds a placeholder, mirroring the 'unset FABRIC_PLATFORM_WORKSPACE_ID warns rather than
+# failing' convention documented in CLAUDE.md. Grain: one row per table (see
+# docs/metadata-db-mapping.md's resolved grain question), except landing which is a Files/ drop,
+# not a table.
+
+placeholder_marker: PLACEHOLDER-RESOLVE-VIA-FABRIC-API
+
+targets:
+  - target_name: lh_landing_nyc_taxi
+    layer_name: landing
+    target_path: Files/
+    target_schema: null
+    config:
+      fileName: yellow_tripdata_2026-01.parquet
+      format: parquet
+      compression: snappy
+      recursive: true
+    per_environment:
+      DEV:
+        target_workspace_id: 37f9f143-c972-45c2-9ae6-995b7639dff5
+        target_lakehouse_id: 95e9be52-6ce5-4912-9264-d8c101939c5f
+      TEST:
+        target_workspace_id: e9472408-b9e1-45ae-8c2a-e22911c8b109
+        target_lakehouse_id: PLACEHOLDER-RESOLVE-VIA-FABRIC-API
+
+  - target_name: yellow_cab_trip_data_bronze
+    layer_name: bronze
+    target_path: Tables/dbo/yellow_cab_trip_data_bronze
+    target_schema: dbo
+    config:
+      writeBehavior: Overwrite
+      auditColumns:
+        - copy_job_id
+        - copy_job_run_id
+        - copy_job_name
+        - timestamp
+    per_environment:
+      DEV:
+        target_workspace_id: 3ab4eb52-fcd3-48e0-a92c-3e3feb437a79
+        target_lakehouse_id: 0bd61d00-d794-4351-8791-faeb94879e25
+      TEST:
+        target_workspace_id: 95c0dc3f-a90a-48a6-b00d-c4b502521c2d
+        target_lakehouse_id: PLACEHOLDER-RESOLVE-VIA-FABRIC-API
+
+  - target_name: yellow_cab_trip_silver
+    layer_name: silver
+    target_path: Tables/dbo/yellow_cab_trip_silver
+    target_schema: dbo
+    config:
+      mode: overwrite
+      transform_layer: silver_transform
+    per_environment:
+      DEV:
+        target_workspace_id: 307d28b4-50b2-43c0-ba34-4f8e0e5c53a0
+        target_lakehouse_id: e52acf23-60cb-480b-9256-9f75e3d424d2
+      TEST:
+        target_workspace_id: d76dab0a-ec8b-445c-aa8d-4c20332c6be5
+        target_lakehouse_id: PLACEHOLDER-RESOLVE-VIA-FABRIC-API
+
+  - target_name: yellow_cab_trip_gold
+    layer_name: gold
+    target_path: Tables/dbo/yellow_cab_trip_gold
+    target_schema: dbo
+    config:
+      mode: overwrite
+      transform_layer: gold_aggregate
+    per_environment:
+      DEV:
+        target_workspace_id: 2b8cb241-d4ae-4c26-affc-6f89941b18af
+        target_lakehouse_id: 864dfa25-bf9b-46ac-8082-e623b6fd5e11
+      TEST:
+        target_workspace_id: 4520a3ae-e2fa-4fe3-8108-6018274664ea
+        target_lakehouse_id: PLACEHOLDER-RESOLVE-VIA-FABRIC-API

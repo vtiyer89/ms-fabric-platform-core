@@ -1,0 +1,39 @@
+# Version-controlled seed content for metadata.SourceObjectConfig, upserted idempotently by
+# scripts/seed_metadata_db.py. source_system_name and target_name are natural-key references,
+# not raw IDs -- SourceSystemId/TargetStoreID are IDENTITY-generated in SourceSystemConfig/
+# TargetStoreConfig and unknowable ahead of time, so the seed script resolves them live via
+# subquery against those tables' own natural keys (SourceSystemName / TargetName) at MERGE time.
+# LayerName values here ('Landing', 'Bronze', ...) intentionally match the casing in the team's
+# own sample SourceObjectConfig data, which differs from target_stores.yaml's lowercase
+# layer_name -- a known inconsistency between the two files, not yet harmonized.
+
+source_objects:
+  - source_system_name: nyc_taxi_yellow
+    source_object_name: yellow_cab_trip_data
+    layer_name: Landing
+    target_name: lh_landing_nyc_taxi
+    load_type: api
+    config: {}
+
+  - source_system_name: nyc_taxi_yellow
+    source_object_name: yellow_cab_trip_data
+    layer_name: Bronze
+    target_name: yellow_cab_trip_data_bronze
+    load_type: Overwrite
+    config:
+      fileName: yellow_tripdata_2026-01.parquet
+      filePath: Files/
+
+  - source_system_name: nyc_taxi_yellow
+    source_object_name: yellow_cab_trip_data
+    layer_name: Silver
+    target_name: yellow_cab_trip_silver
+    load_type: Overwrite
+    config: {}
+
+  - source_system_name: nyc_taxi_yellow
+    source_object_name: yellow_cab_trip_data
+    layer_name: Gold
+    target_name: yellow_cab_trip_gold
+    load_type: Overwrite
+    config: {}

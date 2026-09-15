@@ -1,10 +1,11 @@
 """Create the metadata schema/tables (if missing) and upsert seed rows into the platform SQL database.
 
-Lightweight, POC-scoped seeder for `metadata.SourceSystemConfig` / `metadata.TargetStoreConfig`
-(schema supplied by the data team 2026-09-14; scoping decision in docs/metadata-db-mapping.md).
-This is deliberately NOT the old metadata framework's seeder: no live GUID resolution, no
-owner=ci/ops merge rule. Seed content is version-controlled JSON in platform/metadata/, applied
-idempotently on every run via SQL MERGE keyed on the natural key (SourceSystemName / TargetName).
+Lightweight, POC-scoped seeder for `metadata.SourceSystemConfig` / `metadata.TargetStoreConfig` /
+`metadata.SourceObjectConfig` (schema supplied by the data team 2026-09-14/15; scoping decision
+in docs/metadata-db-mapping.md). This is deliberately NOT the old metadata framework's seeder: no
+live GUID resolution, no owner=ci/ops merge rule. Seed content is version-controlled YAML in
+platform/metadata/, applied idempotently on every run via SQL MERGE keyed on each table's natural
+key.
 
 fabric-cicd's SQLDatabasePublisher only creates/updates the item shell (SQL_DATABASE is in
 fabric_cicd.constants.SHELL_ONLY_PUBLISH) -- it never executes DDL. This script is what actually
@@ -29,6 +30,7 @@ from pathlib import Path
 
 import pyodbc
 import requests
+import yaml
 from azure.identity import ClientSecretCredential
 
 FABRIC_API_BASE = "https://api.fabric.microsoft.com/v1"
@@ -129,7 +131,7 @@ def apply_ddl(conn: pyodbc.Connection, dry_run: bool) -> None:
 
 
 def upsert_source_systems(conn: pyodbc.Connection, environment: str, dry_run: bool) -> int:
-    data = json.loads((METADATA_DIR / "source_systems.json").read_text())
+    data = yaml.safe_load((METADATA_DIR / "source_systems.yaml").read_text())
     rows = data["source_systems"]
 
     merge_sql = """
@@ -165,7 +167,7 @@ def upsert_source_systems(conn: pyodbc.Connection, environment: str, dry_run: bo
 
 
 def upsert_target_stores(conn: pyodbc.Connection, environment: str, dry_run: bool) -> int:
-    data = json.loads((METADATA_DIR / "target_stores.json").read_text())
+    data = yaml.safe_load((METADATA_DIR / "target_stores.yaml").read_text())
     rows = data["targets"]
     placeholder = data.get("placeholder_marker", PLACEHOLDER_MARKER)
 
@@ -231,7 +233,7 @@ def upsert_source_objects(conn: pyodbc.Connection, dry_run: bool) -> int:
     NOT NULL constraint on SourceSystemId/TargetStoreID and fails loudly, by design -- no need
     for a separate Python-side check.
     """
-    data = json.loads((METADATA_DIR / "source_objects.json").read_text())
+    data = yaml.safe_load((METADATA_DIR / "source_objects.yaml").read_text())
     rows = data["source_objects"]
 
     merge_sql = """
@@ -280,7 +282,7 @@ def upsert_source_objects(conn: pyodbc.Connection, dry_run: bool) -> int:
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--workspace-id", required=True, help="Platform workspace holding db_platform_metadata")
-    parser.add_argument("--environment", required=True, help="DEV or TEST -- selects target_stores.json's per_environment values")
+    parser.add_argument("--environment", required=True, help="DEV or TEST -- selects target_stores.yaml's per_environment values")
     parser.add_argument("--dry-run", action="store_true", help="Print what would be executed, change nothing")
     args = parser.parse_args()
 
